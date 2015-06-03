@@ -1,0 +1,11 @@
+--- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
++++ openbsd_usb.c	Wed Jun  3 15:23:19 2015
+@@ -710,6 +710,8 @@
+ 			if ((fd = open(devnode, mode)) < 0)
+ 				return (-1);
+ 
++		fcntl(fd, F_SETFL, O_ASYNC);
++
+ 		hpriv->endpoints[endpt] = fd;
+ 	}
+ 
