@@ -1,0 +1,33 @@
+--- ugen.c.orig	Wed Jun  3 14:35:32 2015
++++ ugen.c	Wed Jun  3 14:45:13 2015
+@@ -102,6 +102,7 @@
+ 
+ 	int sc_refcnt;
+ 	u_char sc_secondary;
++	struct proc        *async;
+ };
+ 
+ void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
+@@ -789,6 +790,7 @@
+ 		return;
+ 
+ 	if (status != USBD_NORMAL_COMPLETION) {
++		/* psiginal(SIGIO) here? */
+ 		DPRINTF(("ugenintr: status=%d\n", status));
+ 		if (status == USBD_STALLED)
+ 			usbd_clear_endpoint_stall_async(sce->pipeh);
+@@ -963,6 +965,14 @@
+ 	switch (cmd) {
+ 	case FIONBIO:
+ 		/* All handled in the upper FS layer. */
++		return (0);
++	case FIOASYNC:
++		if (*(int *)addr) {
++			if (sc->async)
++				return EBUSY;
++			sc->async = p;
++		} else
++			sc->async = 0;
+ 		return (0);
+ 	case USB_SET_SHORT_XFER:
+ 		if (endpt == USB_CONTROL_ENDPOINT)
