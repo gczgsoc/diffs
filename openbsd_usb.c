@@ -75,7 +75,8 @@ static int obsd_submit_transfer(struct usbi_transfer *);
 static int obsd_cancel_transfer(struct usbi_transfer *);
 static void obsd_clear_transfer_priv(struct usbi_transfer *);
 static int obsd_handle_transfer_completion(struct usbi_transfer *);
-static int obsd_handle_events(/* stuff here? */);
+static int obsd_handle_events(struct libusb_context *ctx,
+                              struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 static int obsd_clock_gettime(int, struct timespec *);
 
 /*
@@ -536,7 +537,8 @@ obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
 }
 
 int
-obsd_handle_events(/* stuff here? */)
+obsd_handle_events(struct libusb_context *ctx,
+                   struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 {
 	/* fetch completion code and data from completed
 	 * transfer */
@@ -732,6 +734,13 @@ int
 _async_gen_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
+	/* struct usb_transfer {
+	 *	int     in;       /* read or write? */
+	 *	void    *buffer;  /* data to be transfered */
+	 *	uint32_t length;  /* length of data */
+	 *	uint16_t flags;   /* flags for usbd */
+	 *};
+	 */
 	struct usb_transfer *t;
 	struct device_priv *dpriv;
 	int fd, nr = 1;

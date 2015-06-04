@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Thu Jun  4 16:43:16 2015
++++ ugen.c	Thu Jun  4 19:43:23 2015
 @@ -102,8 +102,11 @@
  
  	int sc_refcnt;
@@ -12,19 +12,29 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +133,11 @@
+@@ -130,6 +133,21 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
-+void ugen_cb(struct usbd_xfer *, void *, ubd_status) {
++/* invoked upon completion of transfer whether successful or
++ * not
++ */
++void ugen_cb(struct usbd_xfer *xfer, void *, ubd_status s) {
++	// if (xfer->status == USBD_NORMAL_COMPLETION)
++	if (ubd_status == USBD_NORMAL_COMPLETION)
 +	/* uiomove */
++	/* how do I know the xfer was a read? */
++	/* I guess the uio should get stored somewhere? */
++	if (ubd_status is complete and it was a read)	
++		error = uiomovei(xfer->buffer, xfer->length, uio);
++	usbd_free_xfer(xfer);
 +	/* psignal */
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -964,6 +972,14 @@
+@@ -964,6 +982,14 @@
  	case FIONBIO:
  		/* All handled in the upper FS layer. */
  		return (0);
@@ -39,7 +49,7 @@
  	case USB_SET_SHORT_XFER:
  		if (endpt == USB_CONTROL_ENDPOINT)
  			return (EINVAL);
-@@ -986,6 +1002,19 @@
+@@ -986,6 +1012,19 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);

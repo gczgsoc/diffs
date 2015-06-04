@@ -1,14 +1,15 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Thu Jun  4 17:02:27 2015
-@@ -75,6 +75,7 @@
++++ openbsd_usb.c	Thu Jun  4 18:16:25 2015
+@@ -75,6 +75,8 @@
  static int obsd_cancel_transfer(struct usbi_transfer *);
  static void obsd_clear_transfer_priv(struct usbi_transfer *);
  static int obsd_handle_transfer_completion(struct usbi_transfer *);
-+static int obsd_handle_events(/* stuff here? */);
++static int obsd_handle_events(struct libusb_context *ctx,
++                              struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
  static int obsd_clock_gettime(int, struct timespec *);
  
  /*
-@@ -84,6 +85,7 @@
+@@ -84,6 +86,7 @@
  static int _cache_active_config_descriptor(struct libusb_device *);
  static int _sync_control_transfer(struct usbi_transfer *);
  static int _sync_gen_transfer(struct usbi_transfer *);
@@ -16,7 +17,7 @@
  static int _access_endpoint(struct libusb_transfer *);
  
  static int _bus_open(int);
-@@ -127,7 +129,7 @@
+@@ -127,7 +130,7 @@
  	obsd_cancel_transfer,
  	obsd_clear_transfer_priv,
  
@@ -25,11 +26,12 @@
  	obsd_handle_transfer_completion,
  
  	obsd_clock_gettime,
-@@ -534,6 +536,14 @@
+@@ -534,6 +537,15 @@
  }
  
  int
-+obsd_handle_events(/* stuff here? */)
++obsd_handle_events(struct libusb_context *ctx,
++                   struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 +{
 +	/* fetch completion code and data from completed
 +	 * transfer */
@@ -40,7 +42,7 @@
  obsd_clock_gettime(int clkid, struct timespec *tp)
  {
  	usbi_dbg("clock %d", clkid);
-@@ -710,10 +720,49 @@
+@@ -710,10 +722,56 @@
  			if ((fd = open(devnode, mode)) < 0)
  				return (-1);
  
@@ -56,6 +58,13 @@
 +_async_gen_transfer(struct usbi_transfer *itransfer)
 +{
 +	struct libusb_transfer *transfer;
++	/* struct usb_transfer {
++	 *	int     in;       /* read or write? */
++	 *	void    *buffer;  /* data to be transfered */
++	 *	uint32_t length;  /* length of data */
++	 *	uint16_t flags;   /* flags for usbd */
++	 *};
++	 */
 +	struct usb_transfer *t;
 +	struct device_priv *dpriv;
 +	int fd, nr = 1;

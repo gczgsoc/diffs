@@ -133,8 +133,18 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void ugen_cb(struct usbd_xfer *, void *, ubd_status) {
+/* invoked upon completion of transfer whether successful or
+ * not
+ */
+void ugen_cb(struct usbd_xfer *xfer, void *, ubd_status s) {
+	// if (xfer->status == USBD_NORMAL_COMPLETION)
+	if (ubd_status == USBD_NORMAL_COMPLETION)
 	/* uiomove */
+	/* how do I know the xfer was a read? */
+	/* I guess the uio should get stored somewhere? */
+	if (ubd_status is complete and it was a read)	
+		error = uiomovei(xfer->buffer, xfer->length, uio);
+	usbd_free_xfer(xfer);
 	/* psignal */
 }
 
