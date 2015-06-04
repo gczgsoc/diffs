@@ -757,22 +757,10 @@ _async_gen_transfer(struct usbi_transfer *itransfer)
 	t->buffer = transfer->buffer;
 	t->length = transfer->length;
 	t->flags = transfer->flags;
-	ioctl(fd, DO_TRANSFER, &t);
-
-	if (IS_XFERIN(transfer)) {
-		if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
-				return _errno_to_libusb(errno);
-
-		nr = read(fd, transfer->buffer, transfer->length);
-	} else {
-		nr = write(fd, transfer->buffer, transfer->length);
-	}
+	nr = ioctl(fd, DO_TRANSFER, &t);
 
 	if (nr < 0)
 		return _errno_to_libusb(errno);
-
-	itransfer->transferred = nr;
 
 	return (0);
 }
