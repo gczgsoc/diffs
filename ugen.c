@@ -105,7 +105,7 @@ struct ugen_softc {
 	struct proc        *async;
 };
 
-void xfercb(struct usbd_xfer *, void *, ubd_status);
+void ugen_cb(struct usbd_xfer *, void *, ubd_status);
 
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
 void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
@@ -133,7 +133,7 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void xfercb(struct usbd_xfer *, void *, ubd_status) {
+void ugen_cb(struct usbd_xfer *, void *, ubd_status) {
 	/* uiomove */
 	/* psignal */
 }
@@ -1009,11 +1009,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		void *buffer = transfer->buffer;
 		uint32_t length = transfer->length;
 		uint16_t flags = transfer->flags;
-		uint32_t timeout = pipe->timeout;
-		usbd_callback callback = xfercb;
 		struct usbd_xfer *xfer;
 		usbd_setup_xfer(&xfer, pipe, buffer, length,
-		                flags, timeout, callback);
+		                flags, pipe->timeout, ugen_cb);
 		usbd_transfer(xfer);
 		return (0);
 	}
