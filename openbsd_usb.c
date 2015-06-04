@@ -732,7 +732,7 @@ int
 _async_gen_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
-	struct usbd_xfer *xfer;
+	struct usb_transfer *t;
 	struct device_priv *dpriv;
 	int fd, nr = 1;
 
@@ -753,9 +753,11 @@ _async_gen_transfer(struct usbi_transfer *itransfer)
 		return _errno_to_libusb(errno);
 
 	/* DONT CALL READ OR WRITE, use ioctl */
-	usbd_setup_xfer(xfer, pipe, priv, buffer, length,
-flags, timeout, callback);
-	ioctl(fd, DO_TRANSFER, &xfer);
+	t->in = IS_XFERIN(transfer);
+	t->buffer = transfer->buffer;
+	t->length = transfer->length;
+	t->flags = transfer->flags;
+	ioctl(fd, DO_TRANSFER, &t);
 
 	if (IS_XFERIN(transfer)) {
 		if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)

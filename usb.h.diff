@@ -1,10 +1,11 @@
 --- usb.h.orig	Thu Jun  4 13:37:23 2015
-+++ usb.h	Thu Jun  4 16:35:32 2015
-@@ -603,6 +603,12 @@
++++ usb.h	Thu Jun  4 16:48:10 2015
+@@ -603,6 +603,13 @@
  
  /*** ioctl() related stuff ***/
  
 +struct usb_transfer {
++	int	in;
 +	void	*buffer;
 +	uint32_t length;
 +	uint16_t flags;

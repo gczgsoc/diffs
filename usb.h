@@ -604,6 +604,7 @@ typedef struct {
 /*** ioctl() related stuff ***/
 
 struct usb_transfer {
+	int	in;
 	void	*buffer;
 	uint32_t length;
 	uint16_t flags;
