@@ -1,0 +1,63 @@
+--- ugen.c.orig	Wed Jun  3 14:35:32 2015
++++ ugen.c	Thu Jun  4 16:36:16 2015
+@@ -102,8 +102,11 @@
+ 
+ 	int sc_refcnt;
+ 	u_char sc_secondary;
++	struct proc        *async;
+ };
+ 
++void xfercb(struct usbd_xfer *, void *, ubd_status);
++
+ void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
+ void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
+ int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
+@@ -130,6 +133,11 @@
+ 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
+ };
+ 
++void xfercb(struct usbd_xfer *, void *, ubd_status) {
++	/* uiomove */
++	/* psignal */
++}
++
+ int
+ ugen_match(struct device *parent, void *match, void *aux)
+ {
+@@ -964,6 +972,14 @@
+ 	case FIONBIO:
+ 		/* All handled in the upper FS layer. */
+ 		return (0);
++	case FIOASYNC:
++		if (*(int *)addr) {
++			if (sc->async)
++				return EBUSY;
++			sc->async = p;
++		} else
++			sc->async = 0;
++		return (0);
+ 	case USB_SET_SHORT_XFER:
+ 		if (endpt == USB_CONTROL_ENDPOINT)
+ 			return (EINVAL);
+@@ -986,6 +1002,21 @@
+ 			return (EINVAL);
+ 		sce->timeout = *(int *)addr;
+ 		return (0);
++	case USB_DO_TRANSFER:
++	{
++		struct usb_transfer *transfer = (void *)addr;
++		struct usbd_pipe *pipe = &sc->sc_endpoints[indpt][IN]->pipeh;
++		void *buffer = transfer->buffer;
++		uint32_t length = transfer->length;
++		uint16_t flags = transfer->flags;
++		uint32_t timeout = pipe->timeout;
++		usbd_callback callback = xfercb;
++		struct usbd_xfer *xfer;
++		usbd_setup_xfer(&xfer, pipe, buffer, length,
++		                flags, timeout, callback);
++		usbd_transfer(xfer);
++		return (0);
++	}
+ 	default:
+ 		break;
+ 	}
