@@ -1,10 +1,7 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun  5 15:22:09 2015
-@@ -102,8 +102,11 @@
- 
- 	int sc_refcnt;
++++ ugen.c	Fri Jun  5 15:33:07 2015
+@@ -104,6 +104,8 @@
  	u_char sc_secondary;
-+	struct proc        *async;
  };
  
 +void ugen_cb(struct usbd_xfer *, void *, ubd_status);
@@ -12,7 +9,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +133,38 @@
+@@ -130,6 +132,38 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -51,58 +48,7 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -964,6 +999,14 @@
- 	case FIONBIO:
- 		/* All handled in the upper FS layer. */
- 		return (0);
-+	case FIOASYNC:
-+		if (*(int *)addr) {
-+			if (sc->async)
-+				return EBUSY;
-+			sc->async = p;
-+		} else
-+			sc->async = 0;
-+		return (0);
- 	case USB_SET_SHORT_XFER:
- 		if (endpt == USB_CONTROL_ENDPOINT)
- 			return (EINVAL);
-@@ -986,6 +1029,35 @@
- 			return (EINVAL);
- 		sce->timeout = *(int *)addr;
- 		return (0);
-+	case USB_DO_BULK_TRANSFER:
-+	{
-+		struct usb_transfer *transfer = (void *)addr;
-+		/* is this a read or a write? */
-+		struct usbd_pipe *pipe = &sc->sc_endpoints[indpt][IN]->pipeh;
-+		/* should we make a new struct representing
-+ 		 * the transfer while it is in progress?
-+ 		 * the structure could store the uio info
-+		 */
-+		/* If this is a write, we should make a uio
-+ 		 * and do a uiomove like in USB_DO_REQUEST
-+		 */
-+		void *buffer = transfer->buffer;
-+		uint32_t length = transfer->length;
-+		uint16_t flags = transfer->flags;
-+		struct usbd_xfer *xfer;
-+		usbd_setup_xfer(&xfer, pipe, buffer, length,
-+		                flags, pipe->timeout, ugen_cb);
-+		usbd_transfer(xfer);
-+		/* create a uio structure and save it
-+		 * somewhere for when the callback returns with the results*/
-+		return (0);
-+	}
-+	case USB_DO_ISOCHRONOUS_TRANSFER:
-+	{
-+	}
-+	case USB_DO_INTERRUPT_TRANSFER:
-+	{
-+	}
- 	default:
- 		break;
- 	}
-@@ -1183,8 +1255,17 @@
+@@ -1183,8 +1217,17 @@
  			}
  		}
  		sce = &sc->sc_endpoints[endpt][IN];
@@ -122,7 +68,7 @@
  		if (err) {
  			error = EIO;
  			goto ret;
-@@ -1193,6 +1274,7 @@
+@@ -1193,6 +1236,7 @@
  		if (len > ur->ucr_actlen)
  			len = ur->ucr_actlen;
  		if (len != 0) {

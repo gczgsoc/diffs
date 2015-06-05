@@ -102,7 +102,6 @@ struct ugen_softc {
 
 	int sc_refcnt;
 	u_char sc_secondary;
-	struct proc        *async;
 };
 
 void ugen_cb(struct usbd_xfer *, void *, ubd_status);
@@ -999,14 +998,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	case FIONBIO:
 		/* All handled in the upper FS layer. */
 		return (0);
-	case FIOASYNC:
-		if (*(int *)addr) {
-			if (sc->async)
-				return EBUSY;
-			sc->async = p;
-		} else
-			sc->async = 0;
-		return (0);
 	case USB_SET_SHORT_XFER:
 		if (endpt == USB_CONTROL_ENDPOINT)
 			return (EINVAL);
@@ -1029,35 +1020,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			return (EINVAL);
 		sce->timeout = *(int *)addr;
 		return (0);
-	case USB_DO_BULK_TRANSFER:
-	{
-		struct usb_transfer *transfer = (void *)addr;
-		/* is this a read or a write? */
-		struct usbd_pipe *pipe = &sc->sc_endpoints[indpt][IN]->pipeh;
-		/* should we make a new struct representing
- 		 * the transfer while it is in progress?
- 		 * the structure could store the uio info
-		 */
-		/* If this is a write, we should make a uio
- 		 * and do a uiomove like in USB_DO_REQUEST
-		 */
-		void *buffer = transfer->buffer;
-		uint32_t length = transfer->length;
-		uint16_t flags = transfer->flags;
-		struct usbd_xfer *xfer;
-		usbd_setup_xfer(&xfer, pipe, buffer, length,
-		                flags, pipe->timeout, ugen_cb);
-		usbd_transfer(xfer);
-		/* create a uio structure and save it
-		 * somewhere for when the callback returns with the results*/
-		return (0);
-	}
-	case USB_DO_ISOCHRONOUS_TRANSFER:
-	{
-	}
-	case USB_DO_INTERRUPT_TRANSFER:
-	{
-	}
 	default:
 		break;
 	}

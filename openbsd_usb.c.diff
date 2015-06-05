@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Fri Jun  5 14:52:22 2015
++++ openbsd_usb.c	Fri Jun  5 15:29:57 2015
 @@ -75,6 +75,8 @@
  static int obsd_cancel_transfer(struct usbi_transfer *);
  static void obsd_clear_transfer_priv(struct usbi_transfer *);
@@ -9,14 +9,14 @@
  static int obsd_clock_gettime(int, struct timespec *);
  
  /*
-@@ -84,6 +86,7 @@
+@@ -83,6 +85,7 @@
+ static int _errno_to_libusb(int);
  static int _cache_active_config_descriptor(struct libusb_device *);
  static int _sync_control_transfer(struct usbi_transfer *);
++static int _async_control_transfer(struct usbi_transfer *);
  static int _sync_gen_transfer(struct usbi_transfer *);
-+static int _async_gen_transfer(struct usbi_transfer *);
  static int _access_endpoint(struct libusb_transfer *);
  
- static int _bus_open(int);
 @@ -127,7 +130,7 @@
  	obsd_cancel_transfer,
  	obsd_clear_transfer_priv,
@@ -63,10 +63,18 @@
  obsd_clock_gettime(int clkid, struct timespec *tp)
  {
  	usbi_dbg("clock %d", clkid);
-@@ -684,6 +696,72 @@
- }
+@@ -676,6 +688,72 @@
+ 			return _errno_to_libusb(errno);
+ 	}
  
- int
++	itransfer->transferred = req.ucr_actlen;
++
++	usbi_dbg("transferred %d", itransfer->transferred);
++
++	return (0);
++}
++
++int
 +_async_control_transfer(struct usbi_transfer *itransfer)
 +{
 +	struct libusb_transfer *transfer;
@@ -125,71 +133,6 @@
 +
 +	// is this set if it was asynchronous or do we do
 +	// this in the callback?
-+	itransfer->transferred = req.ucr_actlen;
-+
-+	usbi_dbg("transferred %d", itransfer->transferred);
-+
-+	return (0);
-+}
-+
-+int
- _access_endpoint(struct libusb_transfer *transfer)
- {
- 	struct handle_priv *hpriv;
-@@ -710,10 +788,56 @@
- 			if ((fd = open(devnode, mode)) < 0)
- 				return (-1);
+ 	itransfer->transferred = req.ucr_actlen;
  
-+		fcntl(fd, F_SETFL, O_ASYNC);
-+
- 		hpriv->endpoints[endpt] = fd;
- 	}
- 
- 	return (hpriv->endpoints[endpt]);
-+}
-+
-+int
-+_async_gen_transfer(struct usbi_transfer *itransfer)
-+{
-+	struct libusb_transfer *transfer;
-+	/* struct usb_transfer {
-+	 *	int     in;       /* read or write? */
-+	 *	void    *buffer;  /* data to be transfered */
-+	 *	uint32_t length;  /* length of data */
-+	 *	uint16_t flags;   /* flags for usbd */
-+	 *};
-+	 */
-+	struct usb_transfer *t;
-+	struct device_priv *dpriv;
-+	int fd, nr = 1;
-+
-+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
-+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-+
-+	if (dpriv->devname == NULL)
-+		return (LIBUSB_ERROR_NOT_SUPPORTED);
-+
-+	/*
-+	 * Bulk, Interrupt or Isochronous transfer depends on the
-+	 * endpoint and thus the node to open.
-+	 */
-+	if ((fd = _access_endpoint(transfer)) < 0)
-+		return _errno_to_libusb(errno);
-+
-+	if ((ioctl(fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
-+		return _errno_to_libusb(errno);
-+
-+	/* DONT CALL READ OR WRITE, use ioctl */
-+	t->in = IS_XFERIN(transfer);
-+	t->buffer = transfer->buffer;
-+	t->length = transfer->length;
-+	t->flags = transfer->flags;
-+	nr = ioctl(fd, DO_TRANSFER, &t);
-+
-+	if (nr < 0)
-+		return _errno_to_libusb(errno);
-+
-+	return (0);
- }
- 
- int
+ 	usbi_dbg("transferred %d", itransfer->transferred);

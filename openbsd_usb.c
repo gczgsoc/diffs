@@ -85,8 +85,8 @@ static int obsd_clock_gettime(int, struct timespec *);
 static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
 static int _sync_control_transfer(struct usbi_transfer *);
+static int _async_control_transfer(struct usbi_transfer *);
 static int _sync_gen_transfer(struct usbi_transfer *);
-static int _async_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
 
 static int _bus_open(int);
@@ -788,56 +788,10 @@ _access_endpoint(struct libusb_transfer *transfer)
 			if ((fd = open(devnode, mode)) < 0)
 				return (-1);
 
-		fcntl(fd, F_SETFL, O_ASYNC);
-
 		hpriv->endpoints[endpt] = fd;
 	}
 
 	return (hpriv->endpoints[endpt]);
-}
-
-int
-_async_gen_transfer(struct usbi_transfer *itransfer)
-{
-	struct libusb_transfer *transfer;
-	/* struct usb_transfer {
-	 *	int     in;       /* read or write? */
-	 *	void    *buffer;  /* data to be transfered */
-	 *	uint32_t length;  /* length of data */
-	 *	uint16_t flags;   /* flags for usbd */
-	 *};
-	 */
-	struct usb_transfer *t;
-	struct device_priv *dpriv;
-	int fd, nr = 1;
-
-	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
-	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-
-	if (dpriv->devname == NULL)
-		return (LIBUSB_ERROR_NOT_SUPPORTED);
-
-	/*
-	 * Bulk, Interrupt or Isochronous transfer depends on the
-	 * endpoint and thus the node to open.
-	 */
-	if ((fd = _access_endpoint(transfer)) < 0)
-		return _errno_to_libusb(errno);
-
-	if ((ioctl(fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
-		return _errno_to_libusb(errno);
-
-	/* DONT CALL READ OR WRITE, use ioctl */
-	t->in = IS_XFERIN(transfer);
-	t->buffer = transfer->buffer;
-	t->length = transfer->length;
-	t->flags = transfer->flags;
-	nr = ioctl(fd, DO_TRANSFER, &t);
-
-	if (nr < 0)
-		return _errno_to_libusb(errno);
-
-	return (0);
 }
 
 int
