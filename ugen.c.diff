@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun  5 03:50:51 2015
++++ ugen.c	Fri Jun  5 15:22:09 2015
 @@ -102,8 +102,11 @@
  
  	int sc_refcnt;
@@ -12,7 +12,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +133,21 @@
+@@ -130,6 +133,38 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -29,12 +29,29 @@
 +		error = uiomovei(xfer->buffer, xfer->length, uio);
 +	usbd_free_xfer(xfer);
 +	/* psignal */
++
++/* for control requests */
++		/* Only if USBD_SHORT_XFER_OK is set. */
++		if (len > ur->ucr_actlen)
++			len = ur->ucr_actlen;
++		if (len != 0) {
++			/* if async, needs to happen in callback */
++			if (uio.uio_rw == UIO_READ) {
++				error = uiomovei(ptr, len, &uio);
++				if (error)
++					goto ret;
++			}
++		}
++	ret:
++		if (ptr)
++			free(ptr, M_TEMP, 0);
++		return (error);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -964,6 +982,14 @@
+@@ -964,6 +999,14 @@
  	case FIONBIO:
  		/* All handled in the upper FS layer. */
  		return (0);
@@ -49,7 +66,7 @@
  	case USB_SET_SHORT_XFER:
  		if (endpt == USB_CONTROL_ENDPOINT)
  			return (EINVAL);
-@@ -986,6 +1012,35 @@
+@@ -986,6 +1029,35 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -85,3 +102,31 @@
  	default:
  		break;
  	}
+@@ -1183,8 +1255,17 @@
+ 			}
+ 		}
+ 		sce = &sc->sc_endpoints[endpt][IN];
+-		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
+-			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
++		// err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
++		//           ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
++		// usbd_status
++		// usbd_request_async(struct usbd_xfer *xfer,
++		//                    usb_device_request_t *req,
++		//                    void *priv, usbd_callback callback)
++		// usbd_request_async_flags doesnt exist?
++		xfer = usbd_alloc_xfer(sc->sc_udev);
++		if (xfer == NULL)
++			return (USBD_NOMEM);
++		err = usbd_request_async(xfer, &ur->ucr_request, NULL, ugen_cb);
+ 		if (err) {
+ 			error = EIO;
+ 			goto ret;
+@@ -1193,6 +1274,7 @@
+ 		if (len > ur->ucr_actlen)
+ 			len = ur->ucr_actlen;
+ 		if (len != 0) {
++			/* if async, needs to happen in callback */
+ 			if (uio.uio_rw == UIO_READ) {
+ 				error = uiomovei(ptr, len, &uio);
+ 				if (error)

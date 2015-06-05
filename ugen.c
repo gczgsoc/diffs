@@ -146,6 +146,23 @@ void ugen_cb(struct usbd_xfer *xfer, void *, ubd_status s) {
 		error = uiomovei(xfer->buffer, xfer->length, uio);
 	usbd_free_xfer(xfer);
 	/* psignal */
+
+/* for control requests */
+		/* Only if USBD_SHORT_XFER_OK is set. */
+		if (len > ur->ucr_actlen)
+			len = ur->ucr_actlen;
+		if (len != 0) {
+			/* if async, needs to happen in callback */
+			if (uio.uio_rw == UIO_READ) {
+				error = uiomovei(ptr, len, &uio);
+				if (error)
+					goto ret;
+			}
+		}
+	ret:
+		if (ptr)
+			free(ptr, M_TEMP, 0);
+		return (error);
 }
 
 int
@@ -1238,8 +1255,17 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			}
 		}
 		sce = &sc->sc_endpoints[endpt][IN];
-		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
-			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
+		// err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
+		//           ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
+		// usbd_status
+		// usbd_request_async(struct usbd_xfer *xfer,
+		//                    usb_device_request_t *req,
+		//                    void *priv, usbd_callback callback)
+		// usbd_request_async_flags doesnt exist?
+		xfer = usbd_alloc_xfer(sc->sc_udev);
+		if (xfer == NULL)
+			return (USBD_NOMEM);
+		err = usbd_request_async(xfer, &ur->ucr_request, NULL, ugen_cb);
 		if (err) {
 			error = EIO;
 			goto ret;
@@ -1248,6 +1274,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		if (len > ur->ucr_actlen)
 			len = ur->ucr_actlen;
 		if (len != 0) {
+			/* if async, needs to happen in callback */
 			if (uio.uio_rw == UIO_READ) {
 				error = uiomovei(ptr, len, &uio);
 				if (error)
