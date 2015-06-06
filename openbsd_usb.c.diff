@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Fri Jun  5 15:29:57 2015
++++ openbsd_usb.c	Sat Jun  6 16:32:44 2015
 @@ -75,6 +75,8 @@
  static int obsd_cancel_transfer(struct usbi_transfer *);
  static void obsd_clear_transfer_priv(struct usbi_transfer *);
@@ -26,7 +26,16 @@
  	obsd_handle_transfer_completion,
  
  	obsd_clock_gettime,
-@@ -479,7 +482,7 @@
+@@ -261,6 +264,8 @@
+ 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
+ 	}
+ 
++	/* usbdi_add_pollfd(HANDLE_CTX(handle), hpriv->fd, POLLOUT) */
++
+ 	return (LIBUSB_SUCCESS);
+ }
+ 
+@@ -479,7 +484,7 @@
  
  	switch (transfer->type) {
  	case LIBUSB_TRANSFER_TYPE_CONTROL:
@@ -35,7 +44,7 @@
  		break;
  	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
  		if (IS_XFEROUT(transfer)) {
-@@ -506,9 +509,9 @@
+@@ -506,9 +511,9 @@
  	if (err)
  		return (err);
  
@@ -47,15 +56,46 @@
  }
  
  int
-@@ -534,6 +537,15 @@
+@@ -534,6 +539,46 @@
  }
  
  int
 +obsd_handle_events(struct libusb_context *ctx,
 +                   struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 +{
++
++	/* for each fd in fds, check pollfd->revents, if
++	 * events then get handle for fd, if POLLERR handle
++	 * error, otherwise reapurb?  I guess ugen should
++	 * keep record of all completed requests then this
++	 * can call handle_completition like linux?
++	 */
 +	/* fetch completion code and data from completed
 +	 * transfer */
++
++	/* this is how ubsdi.c waits for completion of a
++	 * transfer
++	 */
++	/* Sync transfer, wait for completion. */
++	if (err != USBD_IN_PROGRESS)
++		return (err);
++	s = splusb();
++	while (!xfer->done) {
++		if (pipe->device->bus->use_polling)
++			panic("usbd_transfer: not done");
++		flags = PRIBIO | (xfer->flags & USBD_CATCH ? PCATCH : 0);
++
++		err = tsleep(xfer, flags, "usbsyn", 0);
++		if (err && !xfer->done) {
++			usbd_abort_pipe(pipe);
++			if (err == EINTR)
++				xfer->status = USBD_INTERRUPTED;
++			else
++				xfer->status = USBD_TIMEOUT;
++		}
++	}
++	splx(s);
++	return (xfer->status);
 +	return 0;
 +}
 +
@@ -63,7 +103,7 @@
  obsd_clock_gettime(int clkid, struct timespec *tp)
  {
  	usbi_dbg("clock %d", clkid);
-@@ -676,6 +688,72 @@
+@@ -676,6 +721,72 @@
  			return _errno_to_libusb(errno);
  	}
  

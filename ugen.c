@@ -134,20 +134,52 @@ const struct cfattach ugen_ca = {
 
 /* invoked upon completion of transfer whether successful or
  * not
+ * should copy results of read to userspace
  */
-void ugen_cb(struct usbd_xfer *xfer, void *, ubd_status s) {
-	// if (xfer->status == USBD_NORMAL_COMPLETION)
-	if (ubd_status == USBD_NORMAL_COMPLETION)
+void ugen_cb(struct usbd_xfer *xfer, void *priv, ubd_status s) {
+	/* store uio in priv? also store a callback in priv */
+	/* call that callback if successful */
+	if (s == USBD_NORMAL_COMPLETION)
 	/* uiomove if a read, if a write then we're done */
 	/* how do I know the xfer was a read? */
-	/* Get the uio that we saved when submitting the transfer */
+	xfer->request.bmRequestType
+	if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE))
+	/* if read, then make uio
+	 * we just reconstruct it from the xfer stuff
+	 */
 	if (ubd_status is complete and it was a read)	
 		error = uiomovei(xfer->buffer, xfer->length, uio);
-	usbd_free_xfer(xfer);
 	/* psignal */
 
+	if (it was a read) {
+		if (len != 0) {
+			iov.iov_base = (caddr_t)ur->ucr_data;
+			iov.iov_len = len;
+			uio.uio_iov = &iov;
+			uio.uio_iovcnt = 1;
+			uio.uio_resid = len;
+			uio.uio_offset = 0;
+			uio.uio_segflg = UIO_USERSPACE;
+			uio.uio_rw =
+				ur->ucr_request.bmRequestType & UT_READ ?
+				UIO_READ : UIO_WRITE;
+			uio.uio_procp = p;
+			ptr = malloc(len, M_TEMP, M_WAITOK);
+			if (uio.uio_rw == UIO_WRITE) {
+				error = uiomovei(ptr, len, &uio);
+				if (error)
+					goto ret;
+			}
+		}
+	}
+	sce = &sc->sc_endpoints[endpt][IN];
 /* for control requests */
+/* should we put a callback in the ucr_request data
+ * structure that we can call to notify the process that did
+ * the ioctl that the transfer is done?
+ */
 		/* Only if USBD_SHORT_XFER_OK is set. */
+		/* can i get the actlen from xfer? */
 		if (len > ur->ucr_actlen)
 			len = ur->ucr_actlen;
 		if (len != 0) {
@@ -162,6 +194,7 @@ void ugen_cb(struct usbd_xfer *xfer, void *, ubd_status s) {
 		if (ptr)
 			free(ptr, M_TEMP, 0);
 		return (error);
+	usbd_free_xfer(xfer);
 }
 
 int
@@ -1217,17 +1250,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			}
 		}
 		sce = &sc->sc_endpoints[endpt][IN];
-		// err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
-		//           ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
-		// usbd_status
-		// usbd_request_async(struct usbd_xfer *xfer,
-		//                    usb_device_request_t *req,
-		//                    void *priv, usbd_callback callback)
-		// usbd_request_async_flags doesnt exist?
-		xfer = usbd_alloc_xfer(sc->sc_udev);
-		if (xfer == NULL)
-			return (USBD_NOMEM);
-		err = usbd_request_async(xfer, &ur->ucr_request, NULL, ugen_cb);
+		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
+			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
 		if (err) {
 			error = EIO;
 			goto ret;
@@ -1236,12 +1260,85 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		if (len > ur->ucr_actlen)
 			len = ur->ucr_actlen;
 		if (len != 0) {
-			/* if async, needs to happen in callback */
 			if (uio.uio_rw == UIO_READ) {
 				error = uiomovei(ptr, len, &uio);
 				if (error)
 					goto ret;
 			}
+		}
+	ret:
+		if (ptr)
+			free(ptr, M_TEMP, 0);
+		return (error);
+	}
+	case USB_DO_REQUEST_ASYNC:
+	{
+		/* we should pass a callback in as the
+		 * argument
+		 */
+		struct usb_ctl_request *ur = (void *)addr;
+		int len = UGETW(ur->ucr_request.wLength);
+		struct iovec iov;
+		struct uio uio;
+		void *ptr = 0;
+		int error = 0;
+
+		if (!(flag & FWRITE))
+			return (EPERM);
+		/* Avoid requests that would damage the bus integrity. */
+		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->ucr_request.bRequest == UR_SET_ADDRESS) ||
+		    (ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->ucr_request.bRequest == UR_SET_CONFIG) ||
+		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
+		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
+			return (EINVAL);
+
+		if (len < 0 || len > 32767)
+			return (EINVAL);
+		if (ur->ucr_request.bmRequestType & UT_WRITE) {
+			if (len != 0) {
+				iov.iov_base = (caddr_t)ur->ucr_data;
+				iov.iov_len = len;
+				uio.uio_iov = &iov;
+				uio.uio_iovcnt = 1;
+				uio.uio_resid = len;
+				uio.uio_offset = 0;
+				uio.uio_segflg = UIO_USERSPACE;
+				uio.uio_rw =
+					ur->ucr_request.bmRequestType & UT_READ ?
+					UIO_READ : UIO_WRITE;
+				uio.uio_procp = p;
+				ptr = malloc(len, M_TEMP, M_WAITOK);
+				if (uio.uio_rw == UIO_WRITE) {
+					error = uiomovei(ptr, len, &uio);
+					if (error)
+						goto ret;
+				}
+			}
+		}
+		sce = &sc->sc_endpoints[endpt][IN];
+		// err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
+		//           ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
+		// usbd_status
+		// usbd_request_async(struct usbd_xfer *xfer,
+		//                    usb_device_request_t *req,
+		//                    void *priv, usbd_callback callback)
+		// usbd_request_async_flags doesnt exist?
+		// how do we pass ptr???
+		xfer = usbd_alloc_xfer(sc->sc_udev);
+		if (xfer == NULL)
+			return (USBD_NOMEM);
+		/* usbd_setup_default_xfer */
+		/* but usbd_request_async calls usbd_setup_default_xfer */
+		/* maybe pass the uio structure as priv */
+		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
+len, ->ucr_request.ucr_flags, uint32_t timeout, usbd_callback callback);
+		xfer->
+		err = usbd_request_async(xfer, &ur->ucr_request, NULL, ugen_cb);
+		if (err) {
+			error = EIO;
+			goto ret;
 		}
 	ret:
 		if (ptr)

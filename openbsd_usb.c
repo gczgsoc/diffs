@@ -264,6 +264,8 @@ obsd_open(struct libusb_device_handle *handle)
 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
 	}
 
+	/* usbdi_add_pollfd(HANDLE_CTX(handle), hpriv->fd, POLLOUT) */
+
 	return (LIBUSB_SUCCESS);
 }
 
@@ -540,8 +542,39 @@ int
 obsd_handle_events(struct libusb_context *ctx,
                    struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 {
+
+	/* for each fd in fds, check pollfd->revents, if
+	 * events then get handle for fd, if POLLERR handle
+	 * error, otherwise reapurb?  I guess ugen should
+	 * keep record of all completed requests then this
+	 * can call handle_completition like linux?
+	 */
 	/* fetch completion code and data from completed
 	 * transfer */
+
+	/* this is how ubsdi.c waits for completion of a
+	 * transfer
+	 */
+	/* Sync transfer, wait for completion. */
+	if (err != USBD_IN_PROGRESS)
+		return (err);
+	s = splusb();
+	while (!xfer->done) {
+		if (pipe->device->bus->use_polling)
+			panic("usbd_transfer: not done");
+		flags = PRIBIO | (xfer->flags & USBD_CATCH ? PCATCH : 0);
+
+		err = tsleep(xfer, flags, "usbsyn", 0);
+		if (err && !xfer->done) {
+			usbd_abort_pipe(pipe);
+			if (err == EINTR)
+				xfer->status = USBD_INTERRUPTED;
+			else
+				xfer->status = USBD_TIMEOUT;
+		}
+	}
+	splx(s);
+	return (xfer->status);
 	return 0;
 }
 
