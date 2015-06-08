@@ -108,7 +108,7 @@ struct ugen_async_info {
         void (*callback)(void *priv, int id, void *data, int
 len);
         void *priv;
-        void *data;
+        void *buffer;
         int id;
 };
 
@@ -140,32 +140,8 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void
-uhidev_get_report_async_cb(struct usbd_xfer *xfer, void
-*priv, usbd_status err)
-{
-        struct uhidev_async_info *info = priv;
-        int len = -1;
-
-        if (err == USBD_NORMAL_COMPLETION || err ==
-USBD_SHORT_XFER) {
-                len = xfer->actlen;
-                if (info->id > 0) {
-                        len--;
-                        memcpy(info->data, xfer->buffer + 1,
-len);
-                } else {
-                        memcpy(info->data, xfer->buffer,
-len);
-                }
-        }
-        info->callback(info->priv, info->id, info->data,
-len);
-        free(info, M_TEMP, sizeof(*info));
-        usbd_free_xfer(xfer);
-}
 void ugen_cb(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-	struct ugen_info *info = priv;
+	struct ugen_async_info *info = priv;
 	struct uio = info->uio;
 	void *ptr = info->buffer;
 
@@ -1312,7 +1288,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 					goto ret;
 			}
 		}
-		sce = &sc->sc_endpoints[endpt][IN];
 
 		info->uio = uio;
 		info->buffer = ptr;
@@ -1325,6 +1300,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		// usbd_alloc_buffer??
 
+		sce = &sc->sc_endpoints[endpt][IN];
+
 		/* but usbd_request_async calls
 		 * usbd_setup_default_xfer, and that call sets buffer to
 		 * null
@@ -1332,7 +1309,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
 		    len, ur->ucr_request.ucr_flags, sce->timeout, ugen_cb);
 
-		err = usbd_request_async(xfer, &req, info, ugen_cb);
+		err = usbd_request_async(xfer, &ur->ucr_request, info, ugen_cb);
+
 		if (err) {
 			error = EIO;
 			goto ret;

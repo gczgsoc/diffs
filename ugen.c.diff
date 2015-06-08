@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Mon Jun  8 15:44:15 2015
++++ ugen.c	Mon Jun  8 16:15:39 2015
 @@ -104,6 +104,16 @@
  	u_char sc_secondary;
  };
@@ -8,7 +8,7 @@
 +        void (*callback)(void *priv, int id, void *data, int
 +len);
 +        void *priv;
-+        void *data;
++        void *buffer;
 +        int id;
 +};
 +
@@ -17,36 +17,12 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +140,61 @@
+@@ -130,6 +140,37 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
-+void
-+uhidev_get_report_async_cb(struct usbd_xfer *xfer, void
-+*priv, usbd_status err)
-+{
-+        struct uhidev_async_info *info = priv;
-+        int len = -1;
-+
-+        if (err == USBD_NORMAL_COMPLETION || err ==
-+USBD_SHORT_XFER) {
-+                len = xfer->actlen;
-+                if (info->id > 0) {
-+                        len--;
-+                        memcpy(info->data, xfer->buffer + 1,
-+len);
-+                } else {
-+                        memcpy(info->data, xfer->buffer,
-+len);
-+                }
-+        }
-+        info->callback(info->priv, info->id, info->data,
-+len);
-+        free(info, M_TEMP, sizeof(*info));
-+        usbd_free_xfer(xfer);
-+}
 +void ugen_cb(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-+	struct ugen_info *info = priv;
++	struct ugen_async_info *info = priv;
 +	struct uio = info->uio;
 +	void *ptr = info->buffer;
 +
@@ -79,7 +55,7 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1198,6 +1263,79 @@
+@@ -1198,6 +1239,81 @@
  				if (error)
  					goto ret;
  			}
@@ -132,7 +108,6 @@
 +					goto ret;
 +			}
 +		}
-+		sce = &sc->sc_endpoints[endpt][IN];
 +
 +		info->uio = uio;
 +		info->buffer = ptr;
@@ -145,6 +120,8 @@
 +
 +		// usbd_alloc_buffer??
 +
++		sce = &sc->sc_endpoints[endpt][IN];
++
 +		/* but usbd_request_async calls
 +		 * usbd_setup_default_xfer, and that call sets buffer to
 +		 * null
@@ -152,7 +129,8 @@
 +		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
 +		    len, ur->ucr_request.ucr_flags, sce->timeout, ugen_cb);
 +
-+		err = usbd_request_async(xfer, &req, info, ugen_cb);
++		err = usbd_request_async(xfer, &ur->ucr_request, info, ugen_cb);
++
 +		if (err) {
 +			error = EIO;
 +			goto ret;
