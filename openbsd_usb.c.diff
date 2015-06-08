@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Sat Jun  6 16:32:44 2015
++++ openbsd_usb.c	Sun Jun  7 16:01:56 2015
 @@ -75,6 +75,8 @@
  static int obsd_cancel_transfer(struct usbi_transfer *);
  static void obsd_clear_transfer_priv(struct usbi_transfer *);
@@ -9,15 +9,18 @@
  static int obsd_clock_gettime(int, struct timespec *);
  
  /*
-@@ -83,6 +85,7 @@
+@@ -83,8 +85,10 @@
  static int _errno_to_libusb(int);
  static int _cache_active_config_descriptor(struct libusb_device *);
  static int _sync_control_transfer(struct usbi_transfer *);
 +static int _async_control_transfer(struct usbi_transfer *);
  static int _sync_gen_transfer(struct usbi_transfer *);
  static int _access_endpoint(struct libusb_transfer *);
++void obsd_callback(struct usbd_xfer *, void *, usbd_status);
  
-@@ -127,7 +130,7 @@
+ static int _bus_open(int);
+ 
+@@ -127,7 +131,7 @@
  	obsd_cancel_transfer,
  	obsd_clear_transfer_priv,
  
@@ -26,7 +29,18 @@
  	obsd_handle_transfer_completion,
  
  	obsd_clock_gettime,
-@@ -261,6 +264,8 @@
+@@ -139,6 +143,10 @@
+ #define DEVPATH	"/dev/"
+ #define USBDEV	DEVPATH "usb"
+ 
++void
++obsd_callback(struct usbd_xfer *, void *, usbd_status) {
++}
++
+ int
+ obsd_get_device_list(struct libusb_context * ctx,
+ 	struct discovered_devs **discdevs)
+@@ -261,6 +269,8 @@
  		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
  	}
  
@@ -35,7 +49,7 @@
  	return (LIBUSB_SUCCESS);
  }
  
-@@ -479,7 +484,7 @@
+@@ -479,7 +489,7 @@
  
  	switch (transfer->type) {
  	case LIBUSB_TRANSFER_TYPE_CONTROL:
@@ -44,7 +58,7 @@
  		break;
  	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
  		if (IS_XFEROUT(transfer)) {
-@@ -506,9 +511,9 @@
+@@ -506,9 +516,9 @@
  	if (err)
  		return (err);
  
@@ -56,7 +70,7 @@
  }
  
  int
-@@ -534,6 +539,46 @@
+@@ -534,6 +544,84 @@
  }
  
  int
@@ -70,6 +84,44 @@
 +	 * keep record of all completed requests then this
 +	 * can call handle_completition like linux?
 +	 */
++
++	for (i = 0; i < nfds && num_ready > 0; i++) {
++		struct pollfd *pollfd = &fds[i];
++		struct libusb_device_handle *h;
++		struct device_priv *dpriv = NULL;
++
++		if (!pollfd->revents)
++			continue;
++
++		num_ready--;
++		list_for_each_entry(h, &ctx->open_devs, list, struct libusb_device_handle) {
++			dpriv = _device_handle_priv(handle);
++			if (dpriv->fd == pollfd->fd)
++				break;
++		}
++		if (!dpriv || dpriv->fd != pollfd->fd) {
++			usbi_err(ctx, "cannot find handle for fd %d", pollfd->fd);
++			continue;
++		}
++		if (pollfd->revents & POLLERR) {
++			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
++			usbi_handle_disconnect(handle);
++			if (h->dev->attached)
++				continue;
++		}
++		do {
++			r = reap_for_handle(handle);
++		} while (r == 0);
++		if (r == 1 || r == LIBUSB_ERROR_NO_DEVICE)
++			continue;
++		else if (r < 0)
++			goto out;
++	}
++	r = 0;
++out:
++	usbi_mutex_unlock(&ctx->open_devs_lock);
++	return r;
++
 +	/* fetch completion code and data from completed
 +	 * transfer */
 +
@@ -103,13 +155,10 @@
  obsd_clock_gettime(int clkid, struct timespec *tp)
  {
  	usbi_dbg("clock %d", clkid);
-@@ -676,6 +721,72 @@
- 			return _errno_to_libusb(errno);
- 	}
+@@ -679,6 +767,73 @@
+ 	itransfer->transferred = req.ucr_actlen;
  
-+	itransfer->transferred = req.ucr_actlen;
-+
-+	usbi_dbg("transferred %d", itransfer->transferred);
+ 	usbi_dbg("transferred %d", itransfer->transferred);
 +
 +	return (0);
 +}
@@ -140,6 +189,7 @@
 +	(*(uint16_t *)req.ucr_request.wIndex) = setup->wIndex;
 +	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
 +	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
++	req.callback = obsd_callback;
 +
 +	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 +		req.ucr_flags = USBD_SHORT_XFER_OK;
@@ -167,12 +217,15 @@
 +		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
 +			return _errno_to_libusb(errno);
 +
-+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
++		if ((ioctl(dpriv->fd, USB_DO_REQUEST_ASYNC, &req)) < 0)
 +			return _errno_to_libusb(errno);
 +	}
 +
 +	// is this set if it was asynchronous or do we do
 +	// this in the callback?
- 	itransfer->transferred = req.ucr_actlen;
++	// itransfer->transferred = req.ucr_actlen;
++
++	// usbi_dbg("transferred %d", itransfer->transferred);
  
- 	usbi_dbg("transferred %d", itransfer->transferred);
+ 	return (0);
+ }
