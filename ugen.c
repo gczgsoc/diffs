@@ -104,15 +104,7 @@ struct ugen_softc {
 	u_char sc_secondary;
 };
 
-struct ugen_async_info {
-        void (*callback)(void *priv, int id, void *data, int
-len);
-        void *priv;
-        void *buffer;
-        int id;
-};
-
-void ugen_cb(struct usbd_xfer *, void *, ubd_status);
+void ugen_request_async_callback(struct usbd_xfer *, void *, ubd_status);
 
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
 void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
@@ -140,34 +132,22 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void ugen_cb(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-	struct ugen_async_info *info = priv;
-	struct uio = info->uio;
-	void *ptr = info->buffer;
+void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, ubd_status s) {
+	struct uio *uio = priv
+	int error = 0;
 
 	if (s == USBD_NORMAL_COMPLETION) {
-		/* Only if USBD_SHORT_XFER_OK is set. */
-		/* can i get the actlen from xfer? */
-		if (len > ur->ucr_actlen)
-			len = ur->ucr_actlen;
-		if (len != 0) {
-			/* if async, needs to happen in callback */
-			if (uio.uio_rw == UIO_READ) {
-				error = uiomovei(ptr, len, &uio);
-				// error = uiomovei(xfer->buffer, xfer->length, uio);
-				if (error)
-					goto ret;
-			}
+		if (uio.uio_rw == UIO_READ) {
+			error = uiomovei(xfer->buffer, xfer->length, uio);
+			if (error)
+				goto ret;
 		}
-
-		info->callback(xfer, priv, s);
 	}
 
 ret:
-	if (ptr)
-		free(ptr, M_TEMP, 0);
+	if (xfer->buffer)
+		free(xfer->buffer, M_TEMP, 0);
 	usbd_free_xfer(xfer);
-	/* psignal */
 	return (error);
 }
 
@@ -1249,7 +1229,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	{
 		struct usb_ctl_request *ur = (void *)addr;
 		struct usbd_xfer *xfer;
-		struct ugen_async_info *info;
 		int len = UGETW(ur-ucr_request.wLength);
 		struct iovec iov;
 		struct uio uio;
@@ -1289,16 +1268,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			}
 		}
 
-		info->uio = uio;
-		info->buffer = ptr;
-		info->callback = ur->callback;
-
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
 		if (xfer == NULL)
 			return (USBD_NOMEM);
-
-		// usbd_alloc_buffer??
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
@@ -1307,9 +1280,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		 * null
 		 */
 		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
-		    len, ur->ucr_request.ucr_flags, sce->timeout, ugen_cb);
+		    len, ur->ucr_request.ucr_flags, sce->timeout, ugen_request_async_callback);
 
-		err = usbd_request_async(xfer, &ur->ucr_request, info, ugen_cb);
+		err = usbd_request_async(xfer, &ur->ucr_request, &uio, ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;

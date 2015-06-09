@@ -603,8 +603,6 @@ typedef struct {
 
 /*** ioctl() related stuff ***/
 
-typedef void (*usb_ctl_request_async_callback)(struct usbd_xfer *, void *, usbd_status);
-
 struct usb_ctl_request {
 	int	ucr_addr;
 	usb_device_request_t ucr_request;
@@ -612,7 +610,6 @@ struct usb_ctl_request {
 	int	ucr_flags;
 #define USBD_SHORT_XFER_OK	0x04	/* allow short reads */
 	int	ucr_actlen;		/* actual length transferred */
-	usb_ctl_request_async_callback	callback;
 };
 
 struct usb_alt_interface {

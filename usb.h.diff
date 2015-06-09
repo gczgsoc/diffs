@@ -1,23 +1,6 @@
 --- usb.h.orig	Thu Jun  4 13:37:23 2015
-+++ usb.h	Mon Jun  8 15:54:40 2015
-@@ -603,6 +603,8 @@
- 
- /*** ioctl() related stuff ***/
- 
-+typedef void (*usb_ctl_request_async_callback)(struct usbd_xfer *, void *, usbd_status);
-+
- struct usb_ctl_request {
- 	int	ucr_addr;
- 	usb_device_request_t ucr_request;
-@@ -610,6 +612,7 @@
- 	int	ucr_flags;
- #define USBD_SHORT_XFER_OK	0x04	/* allow short reads */
- 	int	ucr_actlen;		/* actual length transferred */
-+	usb_ctl_request_async_callback	callback;
- };
- 
- struct usb_alt_interface {
-@@ -749,6 +752,7 @@
++++ usb.h	Mon Jun  8 20:33:50 2015
+@@ -749,6 +749,7 @@
  #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
  #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
  #define USB_DO_REQUEST		_IOWR('U', 111, struct usb_ctl_request)

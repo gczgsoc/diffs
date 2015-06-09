@@ -75,8 +75,6 @@ static int obsd_submit_transfer(struct usbi_transfer *);
 static int obsd_cancel_transfer(struct usbi_transfer *);
 static void obsd_clear_transfer_priv(struct usbi_transfer *);
 static int obsd_handle_transfer_completion(struct usbi_transfer *);
-static int obsd_handle_events(struct libusb_context *ctx,
-                              struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
 static int obsd_clock_gettime(int, struct timespec *);
 
 /*
@@ -88,7 +86,6 @@ static int _sync_control_transfer(struct usbi_transfer *);
 static int _async_control_transfer(struct usbi_transfer *);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
-void obsd_callback(struct usbd_xfer *, void *, usbd_status);
 
 static int _bus_open(int);
 
@@ -131,7 +128,7 @@ const struct usbi_os_backend openbsd_backend = {
 	obsd_cancel_transfer,
 	obsd_clear_transfer_priv,
 
-	obsd_handle_events,
+	NULL,				/* handle_events() */
 	obsd_handle_transfer_completion,
 
 	obsd_clock_gettime,
@@ -142,10 +139,6 @@ const struct usbi_os_backend openbsd_backend = {
 
 #define DEVPATH	"/dev/"
 #define USBDEV	DEVPATH "usb"
-
-void
-obsd_callback(struct usbd_xfer *, void *, usbd_status) {
-}
 
 int
 obsd_get_device_list(struct libusb_context * ctx,
@@ -516,8 +509,6 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	if (err)
 		return (err);
 
-	// usbi_signal_transfer_completion(itransfer);
-
 	return (LIBUSB_SUCCESS); // does async return success?
 }
 
@@ -541,84 +532,6 @@ int
 obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
 {
 	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-}
-
-int
-obsd_handle_events(struct libusb_context *ctx,
-                   struct pollfd *fds, POLL_NFDS_TYPE nfds, int num_ready)
-{
-
-	/* for each fd in fds, check pollfd->revents, if
-	 * events then get handle for fd, if POLLERR handle
-	 * error, otherwise reapurb?  I guess ugen should
-	 * keep record of all completed requests then this
-	 * can call handle_completition like linux?
-	 */
-
-	for (i = 0; i < nfds && num_ready > 0; i++) {
-		struct pollfd *pollfd = &fds[i];
-		struct libusb_device_handle *h;
-		struct device_priv *dpriv = NULL;
-
-		if (!pollfd->revents)
-			continue;
-
-		num_ready--;
-		list_for_each_entry(h, &ctx->open_devs, list, struct libusb_device_handle) {
-			dpriv = _device_handle_priv(handle);
-			if (dpriv->fd == pollfd->fd)
-				break;
-		}
-		if (!dpriv || dpriv->fd != pollfd->fd) {
-			usbi_err(ctx, "cannot find handle for fd %d", pollfd->fd);
-			continue;
-		}
-		if (pollfd->revents & POLLERR) {
-			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
-			usbi_handle_disconnect(handle);
-			if (h->dev->attached)
-				continue;
-		}
-		do {
-			r = reap_for_handle(handle);
-		} while (r == 0);
-		if (r == 1 || r == LIBUSB_ERROR_NO_DEVICE)
-			continue;
-		else if (r < 0)
-			goto out;
-	}
-	r = 0;
-out:
-	usbi_mutex_unlock(&ctx->open_devs_lock);
-	return r;
-
-	/* fetch completion code and data from completed
-	 * transfer */
-
-	/* this is how ubsdi.c waits for completion of a
-	 * transfer
-	 */
-	/* Sync transfer, wait for completion. */
-	if (err != USBD_IN_PROGRESS)
-		return (err);
-	s = splusb();
-	while (!xfer->done) {
-		if (pipe->device->bus->use_polling)
-			panic("usbd_transfer: not done");
-		flags = PRIBIO | (xfer->flags & USBD_CATCH ? PCATCH : 0);
-
-		err = tsleep(xfer, flags, "usbsyn", 0);
-		if (err && !xfer->done) {
-			usbd_abort_pipe(pipe);
-			if (err == EINTR)
-				xfer->status = USBD_INTERRUPTED;
-			else
-				xfer->status = USBD_TIMEOUT;
-		}
-	}
-	splx(s);
-	return (xfer->status);
-	return 0;
 }
 
 int
@@ -797,7 +710,6 @@ _async_control_transfer(struct usbi_transfer *itransfer)
 	(*(uint16_t *)req.ucr_request.wIndex) = setup->wIndex;
 	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
 	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
-	req.callback = obsd_callback;
 
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 		req.ucr_flags = USBD_SHORT_XFER_OK;
@@ -828,12 +740,6 @@ _async_control_transfer(struct usbi_transfer *itransfer)
 		if ((ioctl(dpriv->fd, USB_DO_REQUEST_ASYNC, &req)) < 0)
 			return _errno_to_libusb(errno);
 	}
-
-	// is this set if it was asynchronous or do we do
-	// this in the callback?
-	// itransfer->transferred = req.ucr_actlen;
-
-	// usbi_dbg("transferred %d", itransfer->transferred);
 
 	return (0);
 }
