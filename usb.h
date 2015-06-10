@@ -749,7 +749,7 @@ struct usb_device_stats {
 #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
 #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
 #define USB_DO_REQUEST		_IOWR('U', 111, struct usb_ctl_request)
-#define USB_DO_REQUEST_ASYNC	_IOWR('U', XXX, struct usb_ctl_request)
+#define USB_GET_COMPLETED	_IOWR('U', XXX, struct usb_ctl_request)
 #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
