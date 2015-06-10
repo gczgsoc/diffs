@@ -1,6 +1,26 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Mon Jun  8 20:31:11 2015
-@@ -104,6 +104,8 @@
++++ ugen.c	Wed Jun 10 14:01:55 2015
+@@ -68,6 +68,11 @@
+ #define UGEN_NISOREQS	6	/* number of outstanding xfer requests */
+ #define UGEN_NISORFRMS	4	/* number of frames (miliseconds) per req */
+ 
++struct xfer_record {
++	usbd_xfer		       *xfer;
++	SIMPLEQ_ENTRY(xfer_record)	next;
++};
++
+ struct ugen_endpoint {
+ 	struct ugen_softc *sc;
+ 	usb_endpoint_descriptor_t *edesc;
+@@ -78,6 +83,7 @@
+ 	struct usbd_pipe *pipeh;
+ 	struct clist q;
+ 	struct selinfo rsel;
++	SIMPLEQ_HEAD(, xfer_record)	xfer_record_head;
+ 	u_char *ibuf;		/* start of buffer (circular for isoc) */
+ 	u_char *fill;		/* location for input (isoc) */
+ 	u_char *limit;		/* end of circular buffer (isoc) */
+@@ -104,6 +110,8 @@
  	u_char sc_secondary;
  };
  
@@ -9,12 +29,13 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +132,25 @@
+@@ -130,6 +138,28 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-+	struct uio *uio = priv
++	struct uio *uio = priv;
++	struct xfer_record;
 +	int error = 0;
 +
 +	if (s == USBD_NORMAL_COMPLETION) {
@@ -22,6 +43,8 @@
 +			error = uiomovei(xfer->buffer, xfer->length, uio);
 +			if (error)
 +				goto ret;
++			xfer_r = malloc(sizeof(struct xfer_record));
++			SIMPLEQ_INSERT_TAIL(&sce->xfer_record_head, xfer_r, next);
 +		}
 +	}
 +
@@ -35,65 +58,35 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1198,6 +1219,74 @@
- 				if (error)
+@@ -393,6 +423,7 @@
+ 		}
+ 	}
+ 	sc->sc_is_open[endpt] = 1;
++	sce->xfer_record_head = SIMPLEQ_HEAD_INITIALIZER(sce->xfer_record_head);
+ 	return (0);
+ }
+ 
+@@ -1144,6 +1175,7 @@
+ 	case USB_DO_REQUEST:
+ 	{
+ 		struct usb_ctl_request *ur = (void *)addr;
++		struct usbd_xfer *xfer;
+ 		int len = UGETW(ur->ucr_request.wLength);
+ 		struct iovec iov;
+ 		struct uio uio;
+@@ -1182,27 +1214,42 @@
  					goto ret;
  			}
-+		}
-+	ret:
-+		if (ptr)
-+			free(ptr, M_TEMP, 0);
-+		return (error);
-+	}
-+	case USB_DO_REQUEST_ASYNC:
-+	{
-+		struct usb_ctl_request *ur = (void *)addr;
-+		struct usbd_xfer *xfer;
-+		int len = UGETW(ur-ucr_request.wLength);
-+		struct iovec iov;
-+		struct uio uio;
-+		void *ptr = 0;
-+		int error = 0;
-+
-+		if (!(flag & FWRITE))
-+			return (EPERM);
-+		/* Avoid requests that would damage the bus integrity. */
-+		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
-+		     ur->ucr_request.bRequest == UR_SET_ADDRESS) ||
-+		    (ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
-+		     ur->ucr_request.bRequest == UR_SET_CONFIG) ||
-+		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
-+		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
-+			return (EINVAL);
-+
-+		if (len < 0 || len > 32767)
-+			return (EINVAL);
-+		if (len != 0) {
-+			iov.iov_base = (caddr_t)ur->ucr_data;
-+			iov.iov_len = len;
-+			uio.uio_iov = &iov;
-+			uio.uio_iovcnt = 1;
-+			uio.uio_resid = len;
-+			uio.uio_offset = 0;
-+			uio.uio_segflg = UIO_USERSPACE;
-+			uio.uio_rw =
-+				ur->ucr_request.bmRequestType & UT_READ ?
-+				UIO_READ : UIO_WRITE;
-+			uio.uio_procp = p;
-+			ptr = malloc(len, M_TEMP, M_WAITOK);
-+			if (uio.uio_rw == UIO_WRITE) {
-+				error = uiomovei(ptr, len, &uio);
-+				if (error)
-+					goto ret;
-+			}
-+		}
+ 		}
 +
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
 +
 +		if (xfer == NULL)
 +			return (USBD_NOMEM);
 +
-+		sce = &sc->sc_endpoints[endpt][IN];
+ 		sce = &sc->sc_endpoints[endpt][IN];
+-		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
+-			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
 +
 +		/* but usbd_request_async calls
 +		 * usbd_setup_default_xfer, and that call sets buffer to
@@ -104,9 +97,35 @@
 +
 +		err = usbd_request_async(xfer, &ur->ucr_request, &uio, ugen_request_async_callback);
 +
-+		if (err) {
-+			error = EIO;
-+			goto ret;
+ 		if (err) {
+ 			error = EIO;
+ 			goto ret;
  		}
+-		/* Only if USBD_SHORT_XFER_OK is set. */
+-		if (len > ur->ucr_actlen)
+-			len = ur->ucr_actlen;
+-		if (len != 0) {
+-			if (uio.uio_rw == UIO_READ) {
+-				error = uiomovei(ptr, len, &uio);
+-				if (error)
+-					goto ret;
+-			}
+-		}
  	ret:
  		if (ptr)
+ 			free(ptr, M_TEMP, 0);
+ 		return (error);
++	}
++	case USB_GET_COMPLETED:
++	{
++		/* transfers were allocated in the driver.
++		 * If we were like linux, we'd send back the urb that was
++		 * allocated in user space which now has its buffer filled
++		 * in
++		 */
++		sce = &sc->sc_endpoints[endpt][IN];
++		return SIMPLEQ_FIRST(sce->xfer_record_head);
++		SIMPLEQ_REMOVE_HEAD(sce->xfer_record_head, next);
+ 	}
+ 	case USB_GET_DEVICEINFO:
+ 		usbd_fill_deviceinfo(sc->sc_udev,
