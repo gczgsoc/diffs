@@ -82,7 +82,6 @@ static int obsd_clock_gettime(int, struct timespec *);
  */
 static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
-static int _sync_control_transfer(struct usbi_transfer *);
 static int _async_control_transfer(struct usbi_transfer *);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
@@ -623,68 +622,6 @@ _cache_active_config_descriptor(struct libusb_device *dev)
 }
 
 int
-_sync_control_transfer(struct usbi_transfer *itransfer)
-{
-	struct libusb_transfer *transfer;
-	struct libusb_control_setup *setup;
-	struct device_priv *dpriv;
-	struct usb_ctl_request req;
-
-	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
-	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-	setup = (struct libusb_control_setup *)transfer->buffer;
-
-	usbi_dbg("type %x request %x value %x index %d length %d timeout %d",
-	    setup->bmRequestType, setup->bRequest,
-	    libusb_le16_to_cpu(setup->wValue),
-	    libusb_le16_to_cpu(setup->wIndex),
-	    libusb_le16_to_cpu(setup->wLength), transfer->timeout);
-
-	req.ucr_addr = transfer->dev_handle->dev->device_address;
-	req.ucr_request.bmRequestType = setup->bmRequestType;
-	req.ucr_request.bRequest = setup->bRequest;
-	/* Don't use USETW, libusb already deals with the endianness */
-	(*(uint16_t *)req.ucr_request.wValue) = setup->wValue;
-	(*(uint16_t *)req.ucr_request.wIndex) = setup->wIndex;
-	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
-	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
-
-	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-		req.ucr_flags = USBD_SHORT_XFER_OK;
-
-	if (dpriv->devname == NULL) {
-		/*
-		 * XXX If the device is not attached to ugen(4) it is
-		 * XXX still possible to submit a control transfer but
-		 * XXX with the default timeout only.
-		 */
-		int fd, err;
-
-		if ((fd = _bus_open(transfer->dev_handle->dev->bus_number)) < 0)
-			return _errno_to_libusb(errno);
-
-		if ((ioctl(fd, USB_REQUEST, &req)) < 0) {
-			err = errno;
-			close(fd);
-			return _errno_to_libusb(err);
-		}
-		close(fd);
-	} else {
-		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
-			return _errno_to_libusb(errno);
-
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
-			return _errno_to_libusb(errno);
-	}
-
-	itransfer->transferred = req.ucr_actlen;
-
-	usbi_dbg("transferred %d", itransfer->transferred);
-
-	return (0);
-}
-
-int
 _async_control_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
@@ -737,7 +674,7 @@ _async_control_transfer(struct usbi_transfer *itransfer)
 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
 			return _errno_to_libusb(errno);
 
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST_ASYNC, &req)) < 0)
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
 			return _errno_to_libusb(errno);
 	}
 
