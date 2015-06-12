@@ -50,6 +50,7 @@
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdi_util.h>
 #include <dev/usb/usbdevs.h>
+#include <dev/usb/usbdivar.h>
 
 #ifdef UGEN_DEBUG
 #define DPRINTF(x)	do { if (ugendebug) printf x; } while (0)
@@ -104,7 +105,7 @@ struct ugen_softc {
 	u_char sc_secondary;
 };
 
-void ugen_request_async_callback(struct usbd_xfer *, void *, ubd_status);
+void ugen_request_async_callback(struct usbd_xfer *, void *, usbd_status);
 
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
 void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
@@ -132,12 +133,10 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-ret:
+void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	if (xfer->buffer)
 		free(xfer->buffer, M_TEMP, 0);
 	usbd_free_xfer(xfer);
-	return (error);
 }
 
 int
@@ -1194,6 +1193,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			}
 		}
 
+		usbd_alloc_buffer(struct usbd_xfer *xfer, u_int32_t size)
+
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
 		if (xfer == NULL)
@@ -1206,9 +1207,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		 * null
 		 */
 		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
-		    len, ur->ucr_request.ucr_flags, sce->timeout, ugen_request_async_callback);
+		    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
 
-		err = usbd_request_async(xfer, &ur->ucr_request, &uio, ugen_request_async_callback);
+		err = usbd_request_async(xfer, &ur->ucr_request, &uio, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;
