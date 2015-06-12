@@ -1,14 +1,6 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 12 17:37:31 2015
-@@ -50,6 +50,7 @@
- #include <dev/usb/usbdi.h>
- #include <dev/usb/usbdi_util.h>
- #include <dev/usb/usbdevs.h>
-+#include <dev/usb/usbdivar.h>
- 
- #ifdef UGEN_DEBUG
- #define DPRINTF(x)	do { if (ugendebug) printf x; } while (0)
-@@ -104,6 +105,8 @@
++++ ugen.c	Fri Jun 12 18:02:47 2015
+@@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
  
@@ -17,20 +9,20 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +133,12 @@
+@@ -130,6 +132,12 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-+	if (xfer->buffer)
-+		free(xfer->buffer, M_TEMP, 0);
++	// if (xfer->buffer)
++		// free(xfer->buffer, M_TEMP, 0);
 +	usbd_free_xfer(xfer);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1144,6 +1153,7 @@
+@@ -1144,6 +1152,7 @@
  	case USB_DO_REQUEST:
  	{
  		struct usb_ctl_request *ur = (void *)addr;
@@ -38,12 +30,23 @@
  		int len = UGETW(ur->ucr_request.wLength);
  		struct iovec iov;
  		struct uio uio;
-@@ -1182,22 +1192,28 @@
- 					goto ret;
- 			}
+@@ -1175,29 +1184,33 @@
+ 				ur->ucr_request.bmRequestType & UT_READ ?
+ 				UIO_READ : UIO_WRITE;
+ 			uio.uio_procp = p;
+-			ptr = malloc(len, M_TEMP, M_WAITOK);
+-			if (uio.uio_rw == UIO_WRITE) {
+-				error = uiomovei(ptr, len, &uio);
+-				if (error)
+-					goto ret;
+-			}
++			// ptr = malloc(len, M_TEMP, M_WAITOK);
++			// if (uio.uio_rw == UIO_WRITE) {
++				// error = uiomovei(ptr, len, &uio);
++				// if (error)
++					// goto ret;
++			// }
  		}
-+
-+		usbd_alloc_buffer(struct usbd_xfer *xfer, u_int32_t size)
 +
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
 +

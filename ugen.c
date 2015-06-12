@@ -50,7 +50,6 @@
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdi_util.h>
 #include <dev/usb/usbdevs.h>
-#include <dev/usb/usbdivar.h>
 
 #ifdef UGEN_DEBUG
 #define DPRINTF(x)	do { if (ugendebug) printf x; } while (0)
@@ -134,8 +133,8 @@ const struct cfattach ugen_ca = {
 };
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-	if (xfer->buffer)
-		free(xfer->buffer, M_TEMP, 0);
+	// if (xfer->buffer)
+		// free(xfer->buffer, M_TEMP, 0);
 	usbd_free_xfer(xfer);
 }
 
@@ -1185,15 +1184,13 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				ur->ucr_request.bmRequestType & UT_READ ?
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = malloc(len, M_TEMP, M_WAITOK);
-			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomovei(ptr, len, &uio);
-				if (error)
-					goto ret;
-			}
+			// ptr = malloc(len, M_TEMP, M_WAITOK);
+			// if (uio.uio_rw == UIO_WRITE) {
+				// error = uiomovei(ptr, len, &uio);
+				// if (error)
+					// goto ret;
+			// }
 		}
-
-		usbd_alloc_buffer(struct usbd_xfer *xfer, u_int32_t size)
 
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
