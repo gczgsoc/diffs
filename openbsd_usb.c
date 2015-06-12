@@ -261,8 +261,6 @@ obsd_open(struct libusb_device_handle *handle)
 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
 	}
 
-	/* usbdi_add_pollfd(HANDLE_CTX(handle), hpriv->fd, POLLOUT) */
-
 	return (LIBUSB_SUCCESS);
 }
 
@@ -508,7 +506,9 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	if (err)
 		return (err);
 
-	return (LIBUSB_SUCCESS); // does async return success?
+	usbi_signal_transfer_completion(itransfer);
+
+	return (LIBUSB_SUCCESS);
 }
 
 int
@@ -667,8 +667,6 @@ _async_control_transfer(struct usbi_transfer *itransfer)
 			close(fd);
 			return _errno_to_libusb(err);
 		}
-		// can we close it if we submitted
-		// asynchronously?
 		close(fd);
 	} else {
 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
@@ -677,6 +675,10 @@ _async_control_transfer(struct usbi_transfer *itransfer)
 		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
 			return _errno_to_libusb(errno);
 	}
+
+	itransfer->transferred = req.ucr_actlen;
+
+	usbi_dbg("transferred %d", itransfer->transferred);
 
 	return (0);
 }
