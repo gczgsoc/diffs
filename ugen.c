@@ -132,7 +132,25 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
+struct ugen_info {
+	struct uio	uio;
+	void	       *ptr;
+	int		length;
+};
+
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
+        struct ugen_info *info = priv;
+        int error = 0;
+
+        if (s == USBD_NORMAL_COMPLETION) {
+                if (info->uio.uio_rw == UIO_READ) {
+                        error = uiomovei(info->ptr, info->length, &info->uio);
+                        if (error)
+                                goto ret;
+                }
+        }
+ret:
+	free(info, M_TEMP, sizeof(*info));
 	usbd_free_xfer(xfer);
 }
 
@@ -1151,6 +1169,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	{
 		struct usb_ctl_request *ur = (void *)addr;
 		struct usbd_xfer *xfer;
+		struct ugen_info *info;
 		int len = UGETW(ur->ucr_request.wLength);
 		struct iovec iov;
 		struct uio uio;
@@ -1175,7 +1194,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (xfer == NULL)
 			return (USBD_NOMEM);
-
 
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
@@ -1212,10 +1230,21 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
 		    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
 
-		err = usbd_request_async(xfer, &ur->ucr_request, &uio, (usbd_callback) ugen_request_async_callback);
+		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
+		if (info == NULL) {
+			usbd_free_xfer(xfer);
+	                return (-1);
+		}
+
+		info->uio = uio;
+		info->ptr = ptr;
+		info->length = len;
+
+		err = usbd_request_async(xfer, &ur->ucr_request, &info, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;
+			free(info, M_TEMP, sizeof(*info));
 			usbd_free_xfer(xfer);
 			return (error);
 		}

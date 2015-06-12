@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 12 18:45:24 2015
++++ ugen.c	Fri Jun 12 21:12:24 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -9,26 +9,45 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +132,10 @@
+@@ -130,6 +132,28 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
++struct ugen_info {
++	struct uio	uio;
++	void	       *ptr;
++	int		length;
++};
++
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
++        struct ugen_info *info = priv;
++        int error = 0;
++
++        if (s == USBD_NORMAL_COMPLETION) {
++                if (info->uio.uio_rw == UIO_READ) {
++                        error = uiomovei(info->ptr, info->length, &info->uio);
++                        if (error)
++                                goto ret;
++                }
++        }
++ret:
++	free(info, M_TEMP, sizeof(*info));
 +	usbd_free_xfer(xfer);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1144,6 +1150,7 @@
+@@ -1144,6 +1168,8 @@
  	case USB_DO_REQUEST:
  	{
  		struct usb_ctl_request *ur = (void *)addr;
 +		struct usbd_xfer *xfer;
++		struct ugen_info *info;
  		int len = UGETW(ur->ucr_request.wLength);
  		struct iovec iov;
  		struct uio uio;
-@@ -1163,6 +1170,13 @@
+@@ -1163,6 +1189,12 @@
  
  		if (len < 0 || len > 32767)
  			return (EINVAL);
@@ -38,11 +57,10 @@
 +		if (xfer == NULL)
 +			return (USBD_NOMEM);
 +
-+
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1189,37 @@
+@@ -1175,34 +1207,48 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -74,11 +92,22 @@
 +		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
 +		    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
 +
-+		err = usbd_request_async(xfer, &ur->ucr_request, &uio, (usbd_callback) ugen_request_async_callback);
++		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
++		if (info == NULL) {
++			usbd_free_xfer(xfer);
++	                return (-1);
++		}
++
++		info->uio = uio;
++		info->ptr = ptr;
++		info->length = len;
++
++		err = usbd_request_async(xfer, &ur->ucr_request, &info, (usbd_callback) ugen_request_async_callback);
 +
  		if (err) {
  			error = EIO;
 -			goto ret;
++			free(info, M_TEMP, sizeof(*info));
 +			usbd_free_xfer(xfer);
 +			return (error);
  		}
