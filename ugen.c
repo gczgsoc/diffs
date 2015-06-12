@@ -68,11 +68,6 @@ int	ugendebug = 0;
 #define UGEN_NISOREQS	6	/* number of outstanding xfer requests */
 #define UGEN_NISORFRMS	4	/* number of frames (miliseconds) per req */
 
-struct xfer_record {
-	usbd_xfer		       *xfer;
-	SIMPLEQ_ENTRY(xfer_record)	next;
-};
-
 struct ugen_endpoint {
 	struct ugen_softc *sc;
 	usb_endpoint_descriptor_t *edesc;
@@ -83,7 +78,6 @@ struct ugen_endpoint {
 	struct usbd_pipe *pipeh;
 	struct clist q;
 	struct selinfo rsel;
-	SIMPLEQ_HEAD(, xfer_record)	xfer_record_head;
 	u_char *ibuf;		/* start of buffer (circular for isoc) */
 	u_char *fill;		/* location for input (isoc) */
 	u_char *limit;		/* end of circular buffer (isoc) */
@@ -139,20 +133,6 @@ const struct cfattach ugen_ca = {
 };
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, ubd_status s) {
-	struct uio *uio = priv;
-	struct xfer_record;
-	int error = 0;
-
-	if (s == USBD_NORMAL_COMPLETION) {
-		if (uio.uio_rw == UIO_READ) {
-			error = uiomovei(xfer->buffer, xfer->length, uio);
-			if (error)
-				goto ret;
-			xfer_r = malloc(sizeof(struct xfer_record));
-			SIMPLEQ_INSERT_TAIL(&sce->xfer_record_head, xfer_r, next);
-		}
-	}
-
 ret:
 	if (xfer->buffer)
 		free(xfer->buffer, M_TEMP, 0);
@@ -423,7 +403,6 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 		}
 	}
 	sc->sc_is_open[endpt] = 1;
-	sce->xfer_record_head = SIMPLEQ_HEAD_INITIALIZER(sce->xfer_record_head);
 	return (0);
 }
 
@@ -1239,17 +1218,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		if (ptr)
 			free(ptr, M_TEMP, 0);
 		return (error);
-	}
-	case USB_GET_COMPLETED:
-	{
-		/* transfers were allocated in the driver.
-		 * If we were like linux, we'd send back the urb that was
-		 * allocated in user space which now has its buffer filled
-		 * in
-		 */
-		sce = &sc->sc_endpoints[endpt][IN];
-		return SIMPLEQ_FIRST(sce->xfer_record_head);
-		SIMPLEQ_REMOVE_HEAD(sce->xfer_record_head, next);
 	}
 	case USB_GET_DEVICEINFO:
 		usbd_fill_deviceinfo(sc->sc_udev,
