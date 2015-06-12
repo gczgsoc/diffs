@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 12 18:02:47 2015
++++ ugen.c	Fri Jun 12 18:45:24 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -9,20 +9,18 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +132,12 @@
+@@ -130,6 +132,10 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-+	// if (xfer->buffer)
-+		// free(xfer->buffer, M_TEMP, 0);
 +	usbd_free_xfer(xfer);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1144,6 +1152,7 @@
+@@ -1144,6 +1150,7 @@
  	case USB_DO_REQUEST:
  	{
  		struct usb_ctl_request *ur = (void *)addr;
@@ -30,28 +28,40 @@
  		int len = UGETW(ur->ucr_request.wLength);
  		struct iovec iov;
  		struct uio uio;
-@@ -1175,29 +1184,33 @@
- 				ur->ucr_request.bmRequestType & UT_READ ?
- 				UIO_READ : UIO_WRITE;
- 			uio.uio_procp = p;
--			ptr = malloc(len, M_TEMP, M_WAITOK);
--			if (uio.uio_rw == UIO_WRITE) {
--				error = uiomovei(ptr, len, &uio);
--				if (error)
--					goto ret;
--			}
-+			// ptr = malloc(len, M_TEMP, M_WAITOK);
-+			// if (uio.uio_rw == UIO_WRITE) {
-+				// error = uiomovei(ptr, len, &uio);
-+				// if (error)
-+					// goto ret;
-+			// }
- 		}
+@@ -1163,6 +1170,13 @@
+ 
+ 		if (len < 0 || len > 32767)
+ 			return (EINVAL);
 +
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
 +
 +		if (xfer == NULL)
 +			return (USBD_NOMEM);
++
++
+ 		if (len != 0) {
+ 			iov.iov_base = (caddr_t)ur->ucr_data;
+ 			iov.iov_len = len;
+@@ -1175,34 +1189,37 @@
+ 				ur->ucr_request.bmRequestType & UT_READ ?
+ 				UIO_READ : UIO_WRITE;
+ 			uio.uio_procp = p;
+-			ptr = malloc(len, M_TEMP, M_WAITOK);
++			ptr = usbd_alloc_buffer(xfer, len);
++			if (ptr == 0) {
++				usbd_free_xfer(xfer);
++				return (0);
++			}
+ 			if (uio.uio_rw == UIO_WRITE) {
+ 				error = uiomovei(ptr, len, &uio);
+-				if (error)
+-					goto ret;
++				if (error) {
++					usbd_free_xfer(xfer);
++					return (error);
++				}
+ 			}
+ 		}
 +
  		sce = &sc->sc_endpoints[endpt][IN];
 -		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
@@ -68,8 +78,10 @@
 +
  		if (err) {
  			error = EIO;
- 			goto ret;
--		}
+-			goto ret;
++			usbd_free_xfer(xfer);
++			return (error);
+ 		}
 -		/* Only if USBD_SHORT_XFER_OK is set. */
 -		if (len > ur->ucr_actlen)
 -			len = ur->ucr_actlen;
@@ -79,6 +91,12 @@
 -				if (error)
 -					goto ret;
 -			}
- 		}
- 	ret:
- 		if (ptr)
+-		}
+-	ret:
+-		if (ptr)
+-			free(ptr, M_TEMP, 0);
+-		return (error);
++		return (0);
+ 	}
+ 	case USB_GET_DEVICEINFO:
+ 		usbd_fill_deviceinfo(sc->sc_udev,

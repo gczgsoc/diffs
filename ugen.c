@@ -133,8 +133,6 @@ const struct cfattach ugen_ca = {
 };
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-	// if (xfer->buffer)
-		// free(xfer->buffer, M_TEMP, 0);
 	usbd_free_xfer(xfer);
 }
 
@@ -1172,6 +1170,13 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (len < 0 || len > 32767)
 			return (EINVAL);
+
+		xfer = usbd_alloc_xfer(sc->sc_udev);
+
+		if (xfer == NULL)
+			return (USBD_NOMEM);
+
+
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;
@@ -1184,18 +1189,19 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				ur->ucr_request.bmRequestType & UT_READ ?
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			// ptr = malloc(len, M_TEMP, M_WAITOK);
-			// if (uio.uio_rw == UIO_WRITE) {
-				// error = uiomovei(ptr, len, &uio);
-				// if (error)
-					// goto ret;
-			// }
+			ptr = usbd_alloc_buffer(xfer, len);
+			if (ptr == 0) {
+				usbd_free_xfer(xfer);
+				return (0);
+			}
+			if (uio.uio_rw == UIO_WRITE) {
+				error = uiomovei(ptr, len, &uio);
+				if (error) {
+					usbd_free_xfer(xfer);
+					return (error);
+				}
+			}
 		}
-
-		xfer = usbd_alloc_xfer(sc->sc_udev);
-
-		if (xfer == NULL)
-			return (USBD_NOMEM);
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
@@ -1210,12 +1216,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (err) {
 			error = EIO;
-			goto ret;
+			usbd_free_xfer(xfer);
+			return (error);
 		}
-	ret:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
-		return (error);
+		return (0);
 	}
 	case USB_GET_DEVICEINFO:
 		usbd_fill_deviceinfo(sc->sc_udev,
