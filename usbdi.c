@@ -601,6 +601,9 @@ usbd_clear_endpoint_stall_async(struct usbd_pipe *pipe)
 	if (xfer == NULL)
 		return (USBD_NOMEM);
 
+	usbd_setup_default_xfer(xfer, xfer->device, NULL,
+	    USBD_DEFAULT_TIMEOUT, &req, NULL, UGETW(req.wLength),
+	    USBD_NO_COPY, NULL);
 	err = usbd_request_async(xfer, &req, NULL, NULL);
 	return (err);
 }
@@ -972,9 +975,6 @@ usbd_request_async(struct usbd_xfer *xfer, usb_device_request_t *req,
 	if (callback == NULL)
 		callback = usbd_request_async_cb;
 
-	usbd_setup_default_xfer(xfer, xfer->device, priv,
-	    USBD_DEFAULT_TIMEOUT, req, NULL, UGETW(req->wLength),
-	    USBD_NO_COPY, callback);
 	err = usbd_transfer(xfer);
 	if (err != USBD_IN_PROGRESS) {
 		usbd_free_xfer(xfer);
