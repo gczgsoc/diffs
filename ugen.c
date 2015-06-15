@@ -138,8 +138,16 @@ struct ugen_info {
 	int		length;
 };
 
+struct xfer_record {
+        struct usbd_xfer	       *xfer;
+        TAILQ_ENTRY(xfer_record)	next;
+};
+
+TAILQ_HEAD(, xfer_record) xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
+
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
         struct ugen_info *info = priv;
+	struct xfer_record *xfer_r;
         int error = 0;
 
         if (s == USBD_NORMAL_COMPLETION) {
@@ -148,6 +156,9 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
                         if (error)
                                 goto ret;
                 }
+
+		xfer_r = malloc(sizeof(struct xfer_record), M_TEMP, M_WAITOK);
+		TAILQ_INSERT_TAIL(&xfer_record_head, xfer_r, next);
         }
 ret:
 	free(info, M_TEMP, sizeof(*info));
@@ -417,6 +428,7 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 		}
 	}
 	sc->sc_is_open[endpt] = 1;
+	// xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
 	return (0);
 }
 
@@ -479,7 +491,10 @@ ugenclose(dev_t dev, int flag, int mode, struct proc *p)
 		}
 	}
 	sc->sc_is_open[endpt] = 0;
-
+	// while ((np = TAILQ_FIRST(&xfer_r_head))) {
+	//	TAILQ_REMOVE(&xfer_r_head, np, next);
+	//	free(np);
+	// }
 	return (0);
 }
 
@@ -1248,6 +1263,18 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			usbd_free_xfer(xfer);
 			return (error);
 		}
+		return (0);
+	}
+	case USB_GET_COMPLETED:
+	{
+		/* transfers were allocated in the driver.
+		 * If we were like linux, we'd send back the urb that was
+		 * allocated in user space which now has its buffer filled
+		 * in
+		 */
+		// xfer_record
+		// return TAILQ_FIRST(xfer_record_head);
+		// TAILQ_REMOVE_HEAD(&xfer_record_head, next);
 		return (0);
 	}
 	case USB_GET_DEVICEINFO:

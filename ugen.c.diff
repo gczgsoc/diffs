@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 12 21:12:24 2015
++++ ugen.c	Mon Jun 15 14:50:01 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -9,7 +9,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +132,28 @@
+@@ -130,6 +132,39 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -19,8 +19,16 @@
 +	int		length;
 +};
 +
++struct xfer_record {
++        struct usbd_xfer	       *xfer;
++        TAILQ_ENTRY(xfer_record)	next;
++};
++
++TAILQ_HEAD(, xfer_record) xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
++
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +        struct ugen_info *info = priv;
++	struct xfer_record *xfer_r;
 +        int error = 0;
 +
 +        if (s == USBD_NORMAL_COMPLETION) {
@@ -29,6 +37,9 @@
 +                        if (error)
 +                                goto ret;
 +                }
++
++		xfer_r = malloc(sizeof(struct xfer_record), M_TEMP, M_WAITOK);
++		TAILQ_INSERT_TAIL(&xfer_record_head, xfer_r, next);
 +        }
 +ret:
 +	free(info, M_TEMP, sizeof(*info));
@@ -38,7 +49,27 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -1144,6 +1168,8 @@
+@@ -393,6 +428,7 @@
+ 		}
+ 	}
+ 	sc->sc_is_open[endpt] = 1;
++	// xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
+ 	return (0);
+ }
+ 
+@@ -455,7 +491,10 @@
+ 		}
+ 	}
+ 	sc->sc_is_open[endpt] = 0;
+-
++	// while ((np = TAILQ_FIRST(&xfer_r_head))) {
++	//	TAILQ_REMOVE(&xfer_r_head, np, next);
++	//	free(np);
++	// }
+ 	return (0);
+ }
+ 
+@@ -1144,6 +1183,8 @@
  	case USB_DO_REQUEST:
  	{
  		struct usb_ctl_request *ur = (void *)addr;
@@ -47,7 +78,7 @@
  		int len = UGETW(ur->ucr_request.wLength);
  		struct iovec iov;
  		struct uio uio;
-@@ -1163,6 +1189,12 @@
+@@ -1163,6 +1204,12 @@
  
  		if (len < 0 || len > 32767)
  			return (EINVAL);
@@ -60,7 +91,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1207,48 @@
+@@ -1175,34 +1222,60 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -125,6 +156,18 @@
 -		if (ptr)
 -			free(ptr, M_TEMP, 0);
 -		return (error);
++		return (0);
++	}
++	case USB_GET_COMPLETED:
++	{
++		/* transfers were allocated in the driver.
++		 * If we were like linux, we'd send back the urb that was
++		 * allocated in user space which now has its buffer filled
++		 * in
++		 */
++		// xfer_record
++		// return TAILQ_FIRST(xfer_record_head);
++		// TAILQ_REMOVE_HEAD(&xfer_record_head, next);
 +		return (0);
  	}
  	case USB_GET_DEVICEINFO:
