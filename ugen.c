@@ -1267,14 +1267,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	}
 	case USB_GET_COMPLETED:
 	{
-		/* transfers were allocated in the driver.
-		 * If we were like linux, we'd send back the urb that was
-		 * allocated in user space which now has its buffer filled
-		 * in
-		 */
-		// xfer_record
-		// return TAILQ_FIRST(xfer_record_head);
-		// TAILQ_REMOVE_HEAD(&xfer_record_head, next);
+		struct usbd_xfer *xfer = (struct usbd_xfer *)addr;
+		struct xfer_record *xfer_r;
+
+		xfer_r = TAILQ_FIRST(&xfer_record_head);
+		xfer = xfer_r->xfer;
+		TAILQ_REMOVE(&xfer_record_head, xfer_r, next);
 		return (0);
 	}
 	case USB_GET_DEVICEINFO:

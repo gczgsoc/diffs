@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Mon Jun 15 14:50:01 2015
++++ ugen.c	Mon Jun 15 20:45:50 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -91,7 +91,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1222,60 @@
+@@ -1175,34 +1222,58 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -160,14 +160,12 @@
 +	}
 +	case USB_GET_COMPLETED:
 +	{
-+		/* transfers were allocated in the driver.
-+		 * If we were like linux, we'd send back the urb that was
-+		 * allocated in user space which now has its buffer filled
-+		 * in
-+		 */
-+		// xfer_record
-+		// return TAILQ_FIRST(xfer_record_head);
-+		// TAILQ_REMOVE_HEAD(&xfer_record_head, next);
++		struct usbd_xfer *xfer = (struct usbd_xfer *)addr;
++		struct xfer_record *xfer_r;
++
++		xfer_r = TAILQ_FIRST(&xfer_record_head);
++		xfer = xfer_r->xfer;
++		TAILQ_REMOVE(&xfer_record_head, xfer_r, next);
 +		return (0);
  	}
  	case USB_GET_DEVICEINFO:
