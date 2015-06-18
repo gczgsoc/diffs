@@ -1240,7 +1240,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		info->ptr = ptr;
 		info->length = len;
 
-		err = usbd_request_async(xfer, &ur->ucr_request, &info, (usbd_callback) ugen_request_async_callback);
+		err = usbd_request_async(xfer, &ur->ucr_request, info, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;

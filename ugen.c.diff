@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 12 21:12:24 2015
++++ ugen.c	Thu Jun 18 02:04:32 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -102,7 +102,7 @@
 +		info->ptr = ptr;
 +		info->length = len;
 +
-+		err = usbd_request_async(xfer, &ur->ucr_request, &info, (usbd_callback) ugen_request_async_callback);
++		err = usbd_request_async(xfer, &ur->ucr_request, info, (usbd_callback) ugen_request_async_callback);
 +
  		if (err) {
  			error = EIO;
