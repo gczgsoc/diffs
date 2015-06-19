@@ -136,29 +136,37 @@ struct ugen_info {
 	struct uio	uio;
 	void	       *ptr;
 	int		length;
+	struct ctl_urb *urb;
 };
 
-struct xfer_record {
-        struct usbd_xfer	       *xfer;
-        TAILQ_ENTRY(xfer_record)	next;
+struct urb_entry {
+        struct ctl_urb	       *urb;
+        TAILQ_ENTRY(urb_entry)	entries;
 };
 
-TAILQ_HEAD(, xfer_record) xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
+TAILQ_HEAD(, urb_entry) urb_entry_head = TAILQ_HEAD_INITIALIZER(urb_entry_head);
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-        struct ugen_info *info = priv;
-	struct xfer_record *xfer_r;
-        int error = 0;
+	struct ugen_info *info = priv;
+	struct urb_entry *ue;
+	int len = info->length;
+	int error = 0;
 
         if (s == USBD_NORMAL_COMPLETION) {
-                if (info->uio.uio_rw == UIO_READ) {
-                        error = uiomovei(info->ptr, info->length, &info->uio);
-                        if (error)
-                                goto ret;
-                }
+		/* Only if USBD_SHORT_XFER_OK is set. */
+		if (len > info->urb->req.ucr_actlen)
+			len = info->urb->req.ucr_actlen;
+		if (len != 0) {
+			if (info->uio.uio_rw == UIO_READ) {
+				error = uiomovei(info->ptr, len, &info->uio);
+				if (error)
+					goto ret;
+			}
+		}
 
-		xfer_r = malloc(sizeof(struct xfer_record), M_TEMP, M_WAITOK);
-		TAILQ_INSERT_TAIL(&xfer_record_head, xfer_r, next);
+		ue = malloc(sizeof(*ue), M_TEMP, M_WAITOK);
+		ue->urb = info->urb;
+		TAILQ_INSERT_TAIL(&urb_entry_head, ue, entries);
         }
 ret:
 	free(info, M_TEMP, sizeof(*info));
@@ -428,7 +436,6 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 		}
 	}
 	sc->sc_is_open[endpt] = 1;
-	// xfer_record_head = TAILQ_HEAD_INITIALIZER(xfer_record_head);
 	return (0);
 }
 
@@ -491,10 +498,7 @@ ugenclose(dev_t dev, int flag, int mode, struct proc *p)
 		}
 	}
 	sc->sc_is_open[endpt] = 0;
-	// while ((np = TAILQ_FIRST(&xfer_r_head))) {
-	//	TAILQ_REMOVE(&xfer_r_head, np, next);
-	//	free(np);
-	// }
+
 	return (0);
 }
 
@@ -1182,7 +1186,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	}
 	case USB_DO_REQUEST:
 	{
-		struct usb_ctl_request *ur = (void *)addr;
+		struct ctl_urb *urb = (void *)addr;
+		struct usb_ctl_request *ur = &urb->req;
 		struct usbd_xfer *xfer;
 		struct ugen_info *info;
 		int len = UGETW(ur->ucr_request.wLength);
@@ -1238,12 +1243,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
-		/* but usbd_request_async calls
-		 * usbd_setup_default_xfer, and that call sets buffer to
-		 * null
-		 */
-		usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
-		    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
+		// usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
+		//    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
 
 		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
 		if (info == NULL) {
@@ -1254,8 +1255,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		info->uio = uio;
 		info->ptr = ptr;
 		info->length = len;
+		info->urb = urb;
 
-		err = usbd_request_async(xfer, &ur->ucr_request, &info, (usbd_callback) ugen_request_async_callback);
+		err = usbd_request_async(xfer, &ur->ucr_request, info, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;
@@ -1267,12 +1269,17 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	}
 	case USB_GET_COMPLETED:
 	{
-		struct usbd_xfer *xfer = (struct usbd_xfer *)addr;
-		struct xfer_record *xfer_r;
+		struct ctl_urb **ptr = (struct ctl_urb **)addr;
+		struct urb_entry *ue;
 
-		xfer_r = TAILQ_FIRST(&xfer_record_head);
-		xfer = xfer_r->xfer;
-		TAILQ_REMOVE(&xfer_record_head, xfer_r, next);
+		if (TAILQ_EMPTY(&urb_entry_head)) {
+			*ptr = NULL;
+			return 0;
+		}
+		ue = TAILQ_FIRST(&urb_entry_head);
+		*ptr = ue->urb;
+		TAILQ_REMOVE(&urb_entry_head, ue, entries);
+		free(ue, M_TEMP, sizeof(*ue));
 		return (0);
 	}
 	case USB_GET_DEVICEINFO:

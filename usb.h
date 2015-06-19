@@ -612,6 +612,11 @@ struct usb_ctl_request {
 	int	ucr_actlen;		/* actual length transferred */
 };
 
+struct ctl_urb {
+	struct usb_ctl_request req;
+	void *user_context;
+};
+
 struct usb_alt_interface {
 	int	uai_config_index;
 	int	uai_interface_index;
@@ -748,11 +753,11 @@ struct usb_device_stats {
 #define USB_GET_ENDPOINT_DESC	_IOWR('U', 108, struct usb_endpoint_desc)
 #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
 #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
-#define USB_DO_REQUEST		_IOWR('U', 111, struct usb_ctl_request)
+#define USB_DO_REQUEST		_IOWR('U', 111, struct ctl_urb)
 #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
-#define USB_GET_COMPLETED       _IOWR('U', 115, struct usb_ctl_request)
+#define USB_GET_COMPLETED       _IOWR('U', 115, struct ctl_urb)
 
 /* Modem device */
 #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)

@@ -1,29 +1,159 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Fri Jun 12 15:21:05 2015
-@@ -82,7 +82,7 @@
-  */
- static int _errno_to_libusb(int);
- static int _cache_active_config_descriptor(struct libusb_device *);
--static int _sync_control_transfer(struct usbi_transfer *);
-+static int _async_control_transfer(struct usbi_transfer *);
- static int _sync_gen_transfer(struct usbi_transfer *);
- static int _access_endpoint(struct libusb_transfer *);
++++ openbsd_usb.c	Fri Jun 19 04:03:45 2015
+@@ -74,6 +74,8 @@
+ static int obsd_submit_transfer(struct usbi_transfer *);
+ static int obsd_cancel_transfer(struct usbi_transfer *);
+ static void obsd_clear_transfer_priv(struct usbi_transfer *);
++static int obsd_handle_events(struct libusb_context *ctx, struct pollfd *,
++    POLL_NFDS_TYPE, int);
+ static int obsd_handle_transfer_completion(struct usbi_transfer *);
+ static int obsd_clock_gettime(int, struct timespec *);
  
-@@ -479,7 +479,7 @@
+@@ -127,7 +129,7 @@
+ 	obsd_cancel_transfer,
+ 	obsd_clear_transfer_priv,
  
- 	switch (transfer->type) {
- 	case LIBUSB_TRANSFER_TYPE_CONTROL:
--		err = _sync_control_transfer(itransfer);
-+		err = _async_control_transfer(itransfer);
- 		break;
- 	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
- 		if (IS_XFEROUT(transfer)) {
-@@ -622,7 +622,7 @@
+-	NULL,				/* handle_events() */
++	obsd_handle_events,
+ 	obsd_handle_transfer_completion,
+ 
+ 	obsd_clock_gettime,
+@@ -261,7 +263,7 @@
+ 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
+ 	}
+ 
+-	return (LIBUSB_SUCCESS);
++	return usbi_add_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0], POLLIN);
+ }
+ 
+ void
+@@ -276,6 +278,7 @@
+ 		close(dpriv->fd);
+ 		dpriv->fd = -1;
+ 	}
++	usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0]);
  }
  
  int
--_sync_control_transfer(struct usbi_transfer *itransfer)
-+_async_control_transfer(struct usbi_transfer *itransfer)
+@@ -506,7 +509,10 @@
+ 	if (err)
+ 		return (err);
+ 
+-	usbi_signal_transfer_completion(itransfer);
++	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
++	} else {
++		usbi_signal_transfer_completion(itransfer);
++	}
+ 
+ 	return (LIBUSB_SUCCESS);
+ }
+@@ -528,6 +534,76 @@
+ }
+ 
+ int
++obsd_handle_events(struct libusb_context *ctx, struct pollfd
++    *fds, POLL_NFDS_TYPE nfds, int num_ready)
++{
++	struct libusb_device_handle *handle;
++	struct handle_priv *hpriv = NULL;
++	struct device_priv *dpriv = NULL;
++	struct usbi_transfer *itransfer;
++	struct pollfd *pollfd;
++	int i, err = 0;
++	struct ctl_urb *urb;
++
++	usbi_dbg("");
++
++	pthread_mutex_lock(&ctx->open_devs_lock);
++	for (i = 0; i < nfds && num_ready > 0; i++) {
++		pollfd = &fds[i];
++
++		if (!pollfd->revents)
++			continue;
++
++		hpriv = NULL;
++		num_ready--;
++		list_for_each_entry(handle, &ctx->open_devs, list,
++		    struct libusb_device_handle) {
++			hpriv = (struct handle_priv *)handle->os_priv;
++
++			if (hpriv->endpoints[0] == pollfd->fd)
++				break;
++
++			hpriv = NULL;
++		}
++
++		if (NULL == hpriv) {
++			usbi_dbg("fd %d is not an event pipe!", pollfd->fd);
++			err = ENOENT;
++			break;
++		}
++
++		if (pollfd->revents & POLLERR) {
++			usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0]);
++			usbi_handle_disconnect(handle);
++			continue;
++		}
++
++		dpriv = (struct device_priv *) handle->dev->os_priv;
++		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {
++			err = errno;
++			break;
++		}
++
++		if (!urb) {
++			err = errno;
++			break;
++		}
++
++		itransfer->transferred = urb->req->ucr_actlen;
++		usbi_dbg("transferred %d", itransfer->transferred);
++
++		usbi_handle_transfer_completion((struct itransfer *) urb->user_context, LIBUSB_TRANSFER_COMPLETED);
++		free(urb);
++	}
++	pthread_mutex_unlock(&ctx->open_devs_lock);
++
++	if (err)
++		return _errno_to_libusb(err);
++
++	return (LIBUSB_SUCCESS);
++}
++
++int
+ obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
- 	struct libusb_transfer *transfer;
+ 	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
+@@ -628,6 +704,7 @@
  	struct libusb_control_setup *setup;
+ 	struct device_priv *dpriv;
+ 	struct usb_ctl_request req;
++	struct ctl_urb *urb;
+ 
+ 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+ 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+@@ -651,6 +728,9 @@
+ 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+ 		req.ucr_flags = USBD_SHORT_XFER_OK;
+ 
++	urb.req = &req;
++	urb.user_context = itransfer;
++
+ 	if (dpriv->devname == NULL) {
+ 		/*
+ 		 * XXX If the device is not attached to ugen(4) it is
+@@ -672,13 +752,9 @@
+ 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
+ 			return _errno_to_libusb(errno);
+ 
+-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
++		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &urb)) < 0)
+ 			return _errno_to_libusb(errno);
+ 	}
+-
+-	itransfer->transferred = req.ucr_actlen;
+-
+-	usbi_dbg("transferred %d", itransfer->transferred);
+ 
+ 	return (0);
+ }
