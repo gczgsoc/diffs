@@ -1274,7 +1274,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (TAILQ_EMPTY(&urb_entry_head)) {
 			*ptr = NULL;
-			return 0;
+			return (-1);
 		}
 		ue = TAILQ_FIRST(&urb_entry_head);
 		*ptr = ue->urb;

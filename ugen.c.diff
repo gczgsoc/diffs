@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 19 04:03:59 2015
++++ ugen.c	Fri Jun 19 22:26:49 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -148,7 +148,7 @@
 +
 +		if (TAILQ_EMPTY(&urb_entry_head)) {
 +			*ptr = NULL;
-+			return 0;
++			return (-1);
  		}
 -	ret:
 -		if (ptr)
