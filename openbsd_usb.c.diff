@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Fri Jun 19 04:03:45 2015
++++ openbsd_usb.c	Fri Jun 19 19:16:11 2015
 @@ -74,6 +74,8 @@
  static int obsd_submit_transfer(struct usbi_transfer *);
  static int obsd_cancel_transfer(struct usbi_transfer *);
@@ -106,10 +106,10 @@
 +			break;
 +		}
 +
-+		itransfer->transferred = urb->req->ucr_actlen;
++		itransfer->transferred = urb->req.ucr_actlen;
 +		usbi_dbg("transferred %d", itransfer->transferred);
 +
-+		usbi_handle_transfer_completion((struct itransfer *) urb->user_context, LIBUSB_TRANSFER_COMPLETED);
++		usbi_handle_transfer_completion((struct usbi_transfer *) urb->user_context, LIBUSB_TRANSFER_COMPLETED);
 +		free(urb);
 +	}
 +	pthread_mutex_unlock(&ctx->open_devs_lock);
@@ -132,17 +132,18 @@
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -651,6 +728,9 @@
+@@ -651,6 +728,10 @@
  	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
  		req.ucr_flags = USBD_SHORT_XFER_OK;
  
-+	urb.req = &req;
-+	urb.user_context = itransfer;
++	urb = malloc(sizeof(*urb));
++	urb->req = req;
++	urb->user_context = itransfer;
 +
  	if (dpriv->devname == NULL) {
  		/*
  		 * XXX If the device is not attached to ugen(4) it is
-@@ -672,13 +752,9 @@
+@@ -672,13 +753,9 @@
  		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
  			return _errno_to_libusb(errno);
  

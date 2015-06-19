@@ -589,10 +589,10 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd
 			break;
 		}
 
-		itransfer->transferred = urb->req->ucr_actlen;
+		itransfer->transferred = urb->req.ucr_actlen;
 		usbi_dbg("transferred %d", itransfer->transferred);
 
-		usbi_handle_transfer_completion((struct itransfer *) urb->user_context, LIBUSB_TRANSFER_COMPLETED);
+		usbi_handle_transfer_completion((struct usbi_transfer *) urb->user_context, LIBUSB_TRANSFER_COMPLETED);
 		free(urb);
 	}
 	pthread_mutex_unlock(&ctx->open_devs_lock);
@@ -728,8 +728,9 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 		req.ucr_flags = USBD_SHORT_XFER_OK;
 
-	urb.req = &req;
-	urb.user_context = itransfer;
+	urb = malloc(sizeof(*urb));
+	urb->req = req;
+	urb->user_context = itransfer;
 
 	if (dpriv->devname == NULL) {
 		/*
