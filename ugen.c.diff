@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 19 22:26:49 2015
++++ ugen.c	Sat Jun 20 18:23:46 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -82,7 +82,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1227,60 @@
+@@ -1175,34 +1227,78 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -138,17 +138,34 @@
 -				error = uiomovei(ptr, len, &uio);
 -				if (error)
 -					goto ret;
--			}
 +		return (0);
 +	}
 +	case USB_GET_COMPLETED:
 +	{
 +		struct ctl_urb **ptr = (struct ctl_urb **)addr;
 +		struct urb_entry *ue;
++		int s;
++		int error = 0;
 +
 +		if (TAILQ_EMPTY(&urb_entry_head)) {
-+			*ptr = NULL;
-+			return (-1);
++			/* Block until transfer completes. */
++			s = splusb();
++			sce->state |= UGEN_ASLP;
++			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
++			error = tsleep(sce, PZERO | PCATCH, "ugenri",
++			    (sce->timeout * hz) / 1000);
++			sce->state &= ~UGEN_ASLP;
++			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
++			if (usbd_is_dying(sc->sc_udev))
++				error = EIO;
++			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
++				error = 0;
+ 			}
++			splx(s);
++			if (TAILQ_EMPTY(&urb_entry_head)) {
++				*ptr = NULL;
++				return (-1);
++			}
  		}
 -	ret:
 -		if (ptr)

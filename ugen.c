@@ -1271,10 +1271,28 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	{
 		struct ctl_urb **ptr = (struct ctl_urb **)addr;
 		struct urb_entry *ue;
+		int s;
+		int error = 0;
 
 		if (TAILQ_EMPTY(&urb_entry_head)) {
-			*ptr = NULL;
-			return (-1);
+			/* Block until transfer completes. */
+			s = splusb();
+			sce->state |= UGEN_ASLP;
+			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
+			error = tsleep(sce, PZERO | PCATCH, "ugenri",
+			    (sce->timeout * hz) / 1000);
+			sce->state &= ~UGEN_ASLP;
+			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
+			if (usbd_is_dying(sc->sc_udev))
+				error = EIO;
+			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
+				error = 0;
+			}
+			splx(s);
+			if (TAILQ_EMPTY(&urb_entry_head)) {
+				*ptr = NULL;
+				return (-1);
+			}
 		}
 		ue = TAILQ_FIRST(&urb_entry_head);
 		*ptr = ue->urb;
