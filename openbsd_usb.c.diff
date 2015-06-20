@@ -1,32 +1,6 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Fri Jun 19 22:32:06 2015
-@@ -127,7 +127,7 @@
- 	obsd_cancel_transfer,
- 	obsd_clear_transfer_priv,
- 
--	NULL,				/* handle_events() */
-+	NULL,				/* handle_events */
- 	obsd_handle_transfer_completion,
- 
- 	obsd_clock_gettime,
-@@ -261,7 +261,7 @@
- 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
- 	}
- 
--	return (LIBUSB_SUCCESS);
-+	return usbi_add_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0], POLLIN);
- }
- 
- void
-@@ -276,6 +276,7 @@
- 		close(dpriv->fd);
- 		dpriv->fd = -1;
- 	}
-+	usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0]);
- }
- 
- int
-@@ -628,6 +629,7 @@
++++ openbsd_usb.c	Sat Jun 20 00:11:39 2015
+@@ -628,6 +628,7 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
  	struct usb_ctl_request req;
@@ -34,7 +8,7 @@
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -669,16 +671,19 @@
+@@ -669,11 +670,25 @@
  		}
  		close(fd);
  	} else {
@@ -48,14 +22,16 @@
 -		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
 +		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &urb)) < 0)
  			return _errno_to_libusb(errno);
--	}
- 
--	itransfer->transferred = req.ucr_actlen;
--
--	usbi_dbg("transferred %d", itransfer->transferred);
-+		while ((ioctl(dpriv-fd, USB_GET_COMPLETED, &urb)) < 0) {}
++
++		while ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {}
++
++		itransfer->transferred = urb->req.ucr_actlen;
++
++		usbi_dbg("transferred %d", itransfer->transferred);
++
 +		free(urb);
-+	}
++
++		return (0);
+ 	}
  
- 	return (0);
- }
+ 	itransfer->transferred = req.ucr_actlen;

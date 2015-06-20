@@ -127,7 +127,7 @@ const struct usbi_os_backend openbsd_backend = {
 	obsd_cancel_transfer,
 	obsd_clear_transfer_priv,
 
-	NULL,				/* handle_events */
+	NULL,				/* handle_events() */
 	obsd_handle_transfer_completion,
 
 	obsd_clock_gettime,
@@ -261,7 +261,7 @@ obsd_open(struct libusb_device_handle *handle)
 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
 	}
 
-	return usbi_add_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0], POLLIN);
+	return (LIBUSB_SUCCESS);
 }
 
 void
@@ -276,7 +276,6 @@ obsd_close(struct libusb_device_handle *handle)
 		close(dpriv->fd);
 		dpriv->fd = -1;
 	}
-	usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0]);
 }
 
 int
@@ -681,9 +680,20 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &urb)) < 0)
 			return _errno_to_libusb(errno);
 
-		while ((ioctl(dpriv-fd, USB_GET_COMPLETED, &urb)) < 0) {}
+		while ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {}
+
+		itransfer->transferred = urb->req.ucr_actlen;
+
+		usbi_dbg("transferred %d", itransfer->transferred);
+
 		free(urb);
+
+		return (0);
 	}
+
+	itransfer->transferred = req.ucr_actlen;
+
+	usbi_dbg("transferred %d", itransfer->transferred);
 
 	return (0);
 }
