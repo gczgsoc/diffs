@@ -1213,7 +1213,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
 		if (xfer == NULL)
-			return (USBD_NOMEM);
+			return (ENOMEM);
 
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
@@ -1230,7 +1230,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == 0) {
 				usbd_free_xfer(xfer);
-				return (0);
+				return (ENOMEM);
 			}
 			if (uio.uio_rw == UIO_WRITE) {
 				error = uiomovei(ptr, len, &uio);
@@ -1249,7 +1249,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
 		if (info == NULL) {
 			usbd_free_xfer(xfer);
-	                return (-1);
+	                return (ENOMEM);
 		}
 
 		info->uio = uio;

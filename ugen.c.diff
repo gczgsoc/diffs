@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Sat Jun 20 18:42:27 2015
++++ ugen.c	Sat Jun 20 18:50:23 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -77,7 +77,7 @@
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
 +
 +		if (xfer == NULL)
-+			return (USBD_NOMEM);
++			return (ENOMEM);
 +
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
@@ -90,7 +90,7 @@
 +			ptr = usbd_alloc_buffer(xfer, len);
 +			if (ptr == 0) {
 +				usbd_free_xfer(xfer);
-+				return (0);
++				return (ENOMEM);
 +			}
  			if (uio.uio_rw == UIO_WRITE) {
  				error = uiomovei(ptr, len, &uio);
@@ -113,7 +113,7 @@
 +		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
 +		if (info == NULL) {
 +			usbd_free_xfer(xfer);
-+	                return (-1);
++	                return (ENOMEM);
 +		}
 +
 +		info->uio = uio;
