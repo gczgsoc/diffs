@@ -674,13 +674,20 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		urb->req = req;
 		urb->user_context = itransfer;
 
-		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
+		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
+			free(urb);
 			return _errno_to_libusb(errno);
+		}
 
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &urb)) < 0)
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, urb)) < 0) {
+			free(urb);
 			return _errno_to_libusb(errno);
+		}
 
-		while ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {}
+		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {
+			free(urb);
+			return _errno_to_libusb(errno);
+		}
 
 		itransfer->transferred = urb->req.ucr_actlen;
 

@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Sat Jun 20 00:11:39 2015
++++ openbsd_usb.c	Sat Jun 20 18:32:11 2015
 @@ -628,6 +628,7 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
@@ -8,22 +8,30 @@
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -669,11 +670,25 @@
+@@ -669,11 +670,32 @@
  		}
  		close(fd);
  	} else {
+-		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
 +		urb = malloc(sizeof(*urb));
 +		urb->req = req;
 +		urb->user_context = itransfer;
 +
- 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
++		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
++			free(urb);
  			return _errno_to_libusb(errno);
++		}
  
 -		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
-+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &urb)) < 0)
++		if ((ioctl(dpriv->fd, USB_DO_REQUEST, urb)) < 0) {
++			free(urb);
  			return _errno_to_libusb(errno);
++		}
 +
-+		while ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {}
++		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {
++			free(urb);
++			return _errno_to_libusb(errno);
++		}
 +
 +		itransfer->transferred = urb->req.ucr_actlen;
 +
