@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Sat Jun 20 18:50:23 2015
++++ ugen.c	Sat Jun 20 19:27:07 2015
 @@ -104,6 +104,8 @@
  	u_char sc_secondary;
  };
@@ -82,7 +82,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1227,78 @@
+@@ -1175,34 +1227,81 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -149,6 +149,9 @@
 +
 +		if (TAILQ_EMPTY(&urb_entry_head)) {
 +			/* Block until transfer completes. */
++			sce = &sc->sc_endpoints[endpt][IN];
++			if (sce == NULL || sce->pipeh == NULL)
++				return (EINVAL);
 +			s = splusb();
 +			sce->state |= UGEN_ASLP;
 +			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));

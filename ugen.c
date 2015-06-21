@@ -1276,6 +1276,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (TAILQ_EMPTY(&urb_entry_head)) {
 			/* Block until transfer completes. */
+			sce = &sc->sc_endpoints[endpt][IN];
+			if (sce == NULL || sce->pipeh == NULL)
+				return (EINVAL);
 			s = splusb();
 			sce->state |= UGEN_ASLP;
 			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
