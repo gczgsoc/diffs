@@ -46,9 +46,13 @@
 #include <sys/vnode.h>
 #include <sys/poll.h>
 
+#include <machine/bus.h>
+
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdi_util.h>
+#include <dev/usb/usbdivar.h>
+#include <dev/usb/usb_mem.h>
 #include <dev/usb/usbdevs.h>
 
 #ifdef UGEN_DEBUG
@@ -137,6 +141,7 @@ struct ugen_info {
 	void	       *ptr;
 	int		length;
 	struct ctl_urb *urb;
+	struct ugen_endpoint *sce;
 };
 
 struct urb_entry {
@@ -144,30 +149,40 @@ struct urb_entry {
         TAILQ_ENTRY(urb_entry)	entries;
 };
 
-TAILQ_HEAD(, urb_entry) urb_entry_head = TAILQ_HEAD_INITIALIZER(urb_entry_head);
+TAILQ_HEAD(, urb_entry) urb_entry_head;
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ugen_info *info = priv;
+	char *buf;
+	int len = -1;
 	struct urb_entry *ue;
-	int len = info->length;
-	int error = 0;
 
-        if (s == USBD_NORMAL_COMPLETION) {
+        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 		/* Only if USBD_SHORT_XFER_OK is set. */
-		if (len > info->urb->req.ucr_actlen)
-			len = info->urb->req.ucr_actlen;
-		if (len != 0) {
-			if (info->uio.uio_rw == UIO_READ) {
-				error = uiomovei(info->ptr, len, &info->uio);
-				if (error)
-					goto ret;
-			}
+		if (info->uio.uio_rw == UIO_READ) {
+			len = xfer->actlen;
+			buf = KERNADDR(&xfer->dmabuf, 0);
+			memcpy(info->ptr, buf, len);
 		}
 
-		ue = malloc(sizeof(*ue), M_TEMP, M_WAITOK);
+		// avoid allocating memory here, put in urb
+		// somehow??
+		ue = malloc(sizeof(*ue), M_TEMP, M_NOWAIT);
+		if (ue == NULL) {
+			goto ret;
+		}
 		ue->urb = info->urb;
 		TAILQ_INSERT_TAIL(&urb_entry_head, ue, entries);
+		if (info->sce->state & UGEN_ASLP) {
+			info->sce->state &= ~UGEN_ASLP;
+			DPRINTFN(5, ("ugen_intr: waking %p\n", info->sce));
+			wakeup(info->sce);
+		}
         }
+	else if (s == USBD_CANCELLED) {
+	}
+	else if (s == USBD_STALLED) {
+	}
 ret:
 	free(info, M_TEMP, sizeof(*info));
 	usbd_free_xfer(xfer);
@@ -192,6 +207,8 @@ ugen_attach(struct device *parent, struct device *self, void *aux)
 	struct usbd_device *udev;
 	usbd_status err;
 	int conf;
+
+	TAILQ_INIT(&urb_entry_head);
 
 	sc->sc_udev = udev = uaa->device;
 
@@ -1243,9 +1260,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
-		// usbd_setup_xfer(xfer, sce->pipeh, NULL, ptr,
-		//    len, ur->ucr_flags, sce->timeout, (usbd_callback) ugen_request_async_callback);
-
 		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
 		if (info == NULL) {
 			usbd_free_xfer(xfer);
@@ -1253,10 +1267,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		}
 
 		info->uio = uio;
-		info->ptr = ptr;
+		info->ptr = (void *)ur->ucr_data;
 		info->length = len;
 		info->urb = urb;
-
+		info->sce = sce;
 		err = usbd_request_async(xfer, &ur->ucr_request, info, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
@@ -1270,36 +1284,42 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	case USB_GET_COMPLETED:
 	{
 		struct ctl_urb **ptr = (struct ctl_urb **)addr;
-		struct urb_entry *ue;
+		struct urb_entry *ue = NULL;
 		int s;
 		int error = 0;
 
-		if (TAILQ_EMPTY(&urb_entry_head)) {
+		s = splusb();
+		ue = TAILQ_FIRST(&urb_entry_head);
+		while (ue == NULL) {
 			/* Block until transfer completes. */
 			sce = &sc->sc_endpoints[endpt][IN];
-			if (sce == NULL || sce->pipeh == NULL)
+			if (sce == NULL) {
+				splx(s);
 				return (EINVAL);
-			s = splusb();
+			}
 			sce->state |= UGEN_ASLP;
 			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
 			error = tsleep(sce, PZERO | PCATCH, "ugenri",
 			    (sce->timeout * hz) / 1000);
 			sce->state &= ~UGEN_ASLP;
 			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
-			if (usbd_is_dying(sc->sc_udev))
-				error = EIO;
-			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
-				error = 0;
-			}
-			splx(s);
-			if (TAILQ_EMPTY(&urb_entry_head)) {
-				*ptr = NULL;
+			if (usbd_is_dying(sc->sc_udev)) {
+				splx(s);
 				return (EIO);
 			}
+			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
+				splx(s);
+				return (EIO);
+			}
+			if (error == EINTR) { /* you pressed Ctrl+C */
+				splx(s);
+				return (EINTR);
+			}
+			ue = TAILQ_FIRST(&urb_entry_head);
 		}
-		ue = TAILQ_FIRST(&urb_entry_head);
 		*ptr = ue->urb;
 		TAILQ_REMOVE(&urb_entry_head, ue, entries);
+		splx(s);
 		free(ue, M_TEMP, sizeof(*ue));
 		return (0);
 	}
