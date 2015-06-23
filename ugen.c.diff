@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Tue Jun 23 03:01:36 2015
++++ ugen.c	Tue Jun 23 15:35:36 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,12 +23,13 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,58 @@
+@@ -130,6 +136,65 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
 +struct ugen_info {
 +	struct uio	uio;
++	struct iovec	iov;
 +	void	       *ptr;
 +	int		length;
 +	struct ctl_urb *urb;
@@ -45,15 +46,21 @@
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +	struct ugen_info *info = priv;
 +	char *buf;
-+	int len = -1;
++	int len = info->length;
 +	struct urb_entry *ue;
 +
 +        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 +		/* Only if USBD_SHORT_XFER_OK is set. */
-+		if (info->uio.uio_rw == UIO_READ) {
++		if (len > xfer->actlen)
 +			len = xfer->actlen;
-+			buf = KERNADDR(&xfer->dmabuf, 0);
-+			memcpy(info->ptr, buf, len);
++		if (len != 0) {
++			if (info->uio.uio_rw == UIO_READ) {
++				buf = KERNADDR(&xfer->dmabuf, 0);
++				//copyout(buf, info->ptr, len);
++				//memcpy(info->ptr, buf, len);
++				printf ("moving %d bytes from %llx to %llx\n", len, (unsigned long long int) buf, (unsigned long long int) info->iov.iov_base);
++				uiomove(buf, len, &info->uio);
++			}
 +		}
 +
 +		// avoid allocating memory here, put in urb
@@ -82,7 +89,7 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +208,8 @@
+@@ -150,6 +215,8 @@
  	usbd_status err;
  	int conf;
  
@@ -91,7 +98,7 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -1143,7 +1203,10 @@
+@@ -1143,7 +1210,10 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -103,7 +110,7 @@
  		int len = UGETW(ur->ucr_request.wLength);
  		struct iovec iov;
  		struct uio uio;
-@@ -1163,6 +1226,12 @@
+@@ -1163,6 +1233,12 @@
  
  		if (len < 0 || len > 32767)
  			return (EINVAL);
@@ -116,7 +123,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1244,84 @@
+@@ -1175,34 +1251,88 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -147,8 +154,12 @@
 +	                return (ENOMEM);
 +		}
 +
++		printf ("request %d bytes from %llx to %llx\n", len, (unsigned long long int) ptr, (unsigned long long int) ur->ucr_data);
 +		info->uio = uio;
-+		info->ptr = (void *)ur->ucr_data;
++		info->iov = iov;
++		info->uio.uio_iov = &info->iov;
++		//info->ptr = (void *)ur->ucr_data;
++		//info->ptr = ptr;
 +		info->length = len;
 +		info->urb = urb;
 +		info->sce = sce;

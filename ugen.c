@@ -138,6 +138,7 @@ const struct cfattach ugen_ca = {
 
 struct ugen_info {
 	struct uio	uio;
+	struct iovec	iov;
 	void	       *ptr;
 	int		length;
 	struct ctl_urb *urb;
@@ -154,15 +155,21 @@ TAILQ_HEAD(, urb_entry) urb_entry_head;
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ugen_info *info = priv;
 	char *buf;
-	int len = -1;
+	int len = info->length;
 	struct urb_entry *ue;
 
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 		/* Only if USBD_SHORT_XFER_OK is set. */
-		if (info->uio.uio_rw == UIO_READ) {
+		if (len > xfer->actlen)
 			len = xfer->actlen;
-			buf = KERNADDR(&xfer->dmabuf, 0);
-			memcpy(info->ptr, buf, len);
+		if (len != 0) {
+			if (info->uio.uio_rw == UIO_READ) {
+				buf = KERNADDR(&xfer->dmabuf, 0);
+				//copyout(buf, info->ptr, len);
+				//memcpy(info->ptr, buf, len);
+				printf ("moving %d bytes from %llx to %llx\n", len, (unsigned long long int) buf, (unsigned long long int) info->iov.iov_base);
+				uiomove(buf, len, &info->uio);
+			}
 		}
 
 		// avoid allocating memory here, put in urb
@@ -1266,8 +1273,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	                return (ENOMEM);
 		}
 
+		printf ("request %d bytes from %llx to %llx\n", len, (unsigned long long int) ptr, (unsigned long long int) ur->ucr_data);
 		info->uio = uio;
-		info->ptr = (void *)ur->ucr_data;
+		info->iov = iov;
+		info->uio.uio_iov = &info->iov;
+		//info->ptr = (void *)ur->ucr_data;
+		//info->ptr = ptr;
 		info->length = len;
 		info->urb = urb;
 		info->sce = sce;
