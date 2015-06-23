@@ -628,7 +628,8 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	struct libusb_control_setup *setup;
 	struct device_priv *dpriv;
 	struct usb_ctl_request req;
-	struct ctl_urb *urb;
+	struct ctl_urb *put_urb;
+	struct ctl_urb *get_urb;
 
 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
@@ -670,30 +671,34 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		}
 		close(fd);
 	} else {
-		urb = malloc(sizeof(*urb));
-		urb->req = req;
-		urb->user_context = itransfer;
+		put_urb = malloc(sizeof(*put_urb));
+		put_urb->req = req;
+		put_urb->user_context = itransfer;
 
 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
-			free(urb);
+			free(put_urb);
 			return _errno_to_libusb(errno);
 		}
 
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, urb)) < 0) {
-			free(urb);
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, put_urb)) < 0) {
+			free(put_urb);
 			return _errno_to_libusb(errno);
 		}
 
-		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &urb)) < 0) {
-			free(urb);
+		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) < 0) {
+			free(put_urb);
 			return _errno_to_libusb(errno);
 		}
 
-		itransfer->transferred = urb->req.ucr_actlen;
+		if (get_urb != put_urb) {
+			return (-1);
+		}
+
+		itransfer->transferred = get_urb->req.ucr_actlen;
 
 		usbi_dbg("transferred %d", itransfer->transferred);
 
-		free(urb);
+		free(get_urb);
 
 		return (0);
 	}
