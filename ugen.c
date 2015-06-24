@@ -136,63 +136,33 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-struct ugen_info {
-	struct uio	uio;
-	struct iovec	iov;
-	void	       *ptr;
-	int		length;
-	struct ctl_urb *urb;
-	struct ugen_endpoint *sce;
-};
-
-struct urb_entry {
-        struct ctl_urb	       *urb;
-        TAILQ_ENTRY(urb_entry)	entries;
-};
-
-TAILQ_HEAD(, urb_entry) urb_entry_head;
+TAILQ_HEAD(, ctl_urb) urb_entry_head;
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-	struct ugen_info *info = priv;
-	char *buf;
-	int len = info->length;
-	struct urb_entry *ue;
+	struct ctl_urb *urb = priv;
+	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 		/* Only if USBD_SHORT_XFER_OK is set. */
-		if (len > xfer->actlen)
-			len = xfer->actlen;
-		if (len != 0) {
-			if (info->uio.uio_rw == UIO_READ) {
-				buf = KERNADDR(&xfer->dmabuf, 0);
-				//copyout(buf, info->ptr, len);
-				//memcpy(info->ptr, buf, len);
-				printf ("moving %d bytes from %llx to %llx\n", len, (unsigned long long int) buf, (unsigned long long int) info->iov.iov_base);
-				uiomove(buf, len, &info->uio);
-			}
-		}
+		urb->actlen = xfer->actlen;
+		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
+		urb->xfer = xfer;
 
-		// avoid allocating memory here, put in urb
-		// somehow??
-		ue = malloc(sizeof(*ue), M_TEMP, M_NOWAIT);
-		if (ue == NULL) {
-			goto ret;
-		}
-		ue->urb = info->urb;
-		TAILQ_INSERT_TAIL(&urb_entry_head, ue, entries);
-		if (info->sce->state & UGEN_ASLP) {
-			info->sce->state &= ~UGEN_ASLP;
-			DPRINTFN(5, ("ugen_intr: waking %p\n", info->sce));
-			wakeup(info->sce);
+		TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+		if (sce != NULL) {
+			wakeup(sce);
+			//if (sce->state & UGEN_ASLP) {
+			//	printf("is asleep\n");
+			//	sce->state &= ~UGEN_ASLP;
+			//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
+			//	wakeup(sce);
+			//}
 		}
         }
 	else if (s == USBD_CANCELLED) {
 	}
 	else if (s == USBD_STALLED) {
 	}
-ret:
-	free(info, M_TEMP, sizeof(*info));
-	usbd_free_xfer(xfer);
 }
 
 int
@@ -1211,14 +1181,16 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	case USB_DO_REQUEST:
 	{
 		struct ctl_urb *urb = (void *)addr;
+		struct ctl_urb *kurb;
 		struct usb_ctl_request *ur = &urb->req;
 		struct usbd_xfer *xfer;
-		struct ugen_info *info;
-		int len = UGETW(ur->ucr_request.wLength);
+		int len;
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
 		int error = 0;
+
+		len = UGETW(ur->ucr_request.wLength);
 
 		if (!(flag & FWRITE))
 			return (EPERM);
@@ -1233,6 +1205,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		if (len < 0 || len > 32767)
 			return (EINVAL);
+
+		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
+		if (kurb == NULL)
+			return (ENOMEM);
+
+		kurb->req = urb->req;
 
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
@@ -1253,12 +1231,14 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			uio.uio_procp = p;
 			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == 0) {
+				free(kurb, M_TEMP, sizeof(*kurb));
 				usbd_free_xfer(xfer);
 				return (ENOMEM);
 			}
 			if (uio.uio_rw == UIO_WRITE) {
 				error = uiomovei(ptr, len, &uio);
 				if (error) {
+					free(kurb, M_TEMP, sizeof(*kurb));
 					usbd_free_xfer(xfer);
 					return (error);
 				}
@@ -1267,26 +1247,13 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
-		info = malloc(sizeof(*info), M_TEMP, M_NOWAIT);
-		if (info == NULL) {
-			usbd_free_xfer(xfer);
-	                return (ENOMEM);
-		}
+		kurb->sce = sce;
 
-		printf ("request %d bytes from %llx to %llx\n", len, (unsigned long long int) ptr, (unsigned long long int) ur->ucr_data);
-		info->uio = uio;
-		info->iov = iov;
-		info->uio.uio_iov = &info->iov;
-		//info->ptr = (void *)ur->ucr_data;
-		//info->ptr = ptr;
-		info->length = len;
-		info->urb = urb;
-		info->sce = sce;
-		err = usbd_request_async(xfer, &ur->ucr_request, info, (usbd_callback) ugen_request_async_callback);
+		err = usbd_request_async(xfer, &ur->ucr_request, kurb, (usbd_callback) ugen_request_async_callback);
 
 		if (err) {
 			error = EIO;
-			free(info, M_TEMP, sizeof(*info));
+			free(kurb, M_TEMP, sizeof(*kurb));
 			usbd_free_xfer(xfer);
 			return (error);
 		}
@@ -1294,14 +1261,18 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	}
 	case USB_GET_COMPLETED:
 	{
-		struct ctl_urb **ptr = (struct ctl_urb **)addr;
-		struct urb_entry *ue = NULL;
+		struct ctl_urb *urb = (struct ctl_urb *)addr;
+		struct ctl_urb *kurb;
+		struct usb_ctl_request *ur;
 		int s;
 		int error = 0;
+		int len;
+		struct iovec iov;
+		struct uio uio;
 
 		s = splusb();
-		ue = TAILQ_FIRST(&urb_entry_head);
-		while (ue == NULL) {
+		kurb = TAILQ_FIRST(&urb_entry_head);
+		while (kurb == NULL) {
 			/* Block until transfer completes. */
 			sce = &sc->sc_endpoints[endpt][IN];
 			if (sce == NULL) {
@@ -1326,12 +1297,33 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				splx(s);
 				return (EINTR);
 			}
-			ue = TAILQ_FIRST(&urb_entry_head);
+			kurb = TAILQ_FIRST(&urb_entry_head);
 		}
-		*ptr = ue->urb;
-		TAILQ_REMOVE(&urb_entry_head, ue, entries);
+		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
 		splx(s);
-		free(ue, M_TEMP, sizeof(*ue));
+		ur = &kurb->req;
+		len = UGETW(ur->ucr_request.wLength);
+		if (len > kurb->actlen)
+			len = kurb->actlen;
+		if (len != 0) {
+			iov.iov_base = (caddr_t)ur->ucr_data;
+			iov.iov_len = len;
+			uio.uio_iov = &iov;
+			uio.uio_iovcnt = 1;
+			uio.uio_resid = len;
+			uio.uio_offset = 0;
+			uio.uio_segflg = UIO_USERSPACE;
+			uio.uio_rw =
+				ur->ucr_request.bmRequestType & UT_READ ?
+				UIO_READ : UIO_WRITE;
+			uio.uio_procp = p;
+			if (uio.uio_rw == UIO_READ) {
+				uiomove(kurb->dmabuf, len, &uio);
+			}
+		}
+		*urb = *kurb;
+		usbd_free_xfer(kurb->xfer);
+		free(kurb, M_TEMP, sizeof(*kurb));
 		return (0);
 	}
 	case USB_GET_DEVICEINFO:
@@ -1389,6 +1381,14 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 #endif
 	s = splusb();
 	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
+	case UE_CONTROL:
+		if (events & (POLLIN | POLLRDNORM)) {
+			if (!TAILQ_EMPTY(&urb_entry_head))
+				revents |= events & (POLLIN | POLLRDNORM);
+			else
+				selrecord(p, &sce->rsel);
+		}
+		break;
 	case UE_INTERRUPT:
 		if (events & (POLLIN | POLLRDNORM)) {
 			if (sce->q.c_cc > 0)

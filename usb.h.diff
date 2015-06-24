@@ -1,18 +1,32 @@
 --- usb.h.orig	Thu Jun  4 13:37:23 2015
-+++ usb.h	Fri Jun 19 04:04:13 2015
-@@ -612,6 +612,11 @@
++++ usb.h	Tue Jun 23 19:49:17 2015
+@@ -41,6 +41,8 @@
+ 
+ #include <sys/ioctl.h>
+ 
++#include <sys/queue.h>
++
+ #define USB_STACK_VERSION 2
+ 
+ #define USB_MAX_DEVICES 128
+@@ -612,6 +614,16 @@
  	int	ucr_actlen;		/* actual length transferred */
  };
  
 +struct ctl_urb {
 +	struct usb_ctl_request req;
++	void *xfer;
++	int actlen;
++	void *sce;
++	void *dmabuf;
++	TAILQ_ENTRY(ctl_urb) entries;
 +	void *user_context;
 +};
 +
  struct usb_alt_interface {
  	int	uai_config_index;
  	int	uai_interface_index;
-@@ -748,10 +753,11 @@
+@@ -748,10 +760,11 @@
  #define USB_GET_ENDPOINT_DESC	_IOWR('U', 108, struct usb_endpoint_desc)
  #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
  #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)

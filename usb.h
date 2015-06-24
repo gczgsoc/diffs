@@ -41,6 +41,8 @@
 
 #include <sys/ioctl.h>
 
+#include <sys/queue.h>
+
 #define USB_STACK_VERSION 2
 
 #define USB_MAX_DEVICES 128
@@ -614,6 +616,11 @@ struct usb_ctl_request {
 
 struct ctl_urb {
 	struct usb_ctl_request req;
+	void *xfer;
+	int actlen;
+	void *sce;
+	void *dmabuf;
+	TAILQ_ENTRY(ctl_urb) entries;
 	void *user_context;
 };
 

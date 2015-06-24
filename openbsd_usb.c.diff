@@ -1,48 +1,49 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Tue Jun 23 00:11:11 2015
-@@ -628,6 +628,8 @@
++++ openbsd_usb.c	Tue Jun 23 23:54:35 2015
+@@ -628,6 +628,9 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
  	struct usb_ctl_request req;
-+	struct ctl_urb *put_urb;
-+	struct ctl_urb *get_urb;
++	struct ctl_urb put_urb;
++	struct ctl_urb get_urb;
++	struct pollfd pfd;
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -669,11 +671,36 @@
+@@ -669,11 +672,36 @@
  		}
  		close(fd);
  	} else {
 -		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
-+		put_urb = malloc(sizeof(*put_urb));
-+		put_urb->req = req;
-+		put_urb->user_context = itransfer;
++		put_urb.req = req;
++		put_urb.user_context = itransfer;
 +
 +		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
-+			free(put_urb);
  			return _errno_to_libusb(errno);
 +		}
  
 -		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
-+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, put_urb)) < 0) {
-+			free(put_urb);
++		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &put_urb)) < 0) {
  			return _errno_to_libusb(errno);
 +		}
 +
-+		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) < 0) {
-+			free(put_urb);
++		pfd->fd = dpriv->fd;
++		pdf->events = POLLIN | POLLRDNORM;
++		if ((poll(&pfd, 1, INFTIM)) < 0) {
 +			return _errno_to_libusb(errno);
 +		}
 +
-+		if (get_urb != put_urb) {
++		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) < 0) {
++			return _errno_to_libusb(errno);
++		}
++
++		if (get_urb.user_context != put_urb.user_context) {
 +			return (-1);
 +		}
 +
-+		itransfer->transferred = get_urb->req.ucr_actlen;
++		itransfer->transferred = get_urb.actlen;
 +
 +		usbi_dbg("transferred %d", itransfer->transferred);
-+
-+		free(get_urb);
 +
 +		return (0);
  	}
