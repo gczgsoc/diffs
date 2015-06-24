@@ -1210,7 +1210,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		if (kurb == NULL)
 			return (ENOMEM);
 
-		kurb->req = urb->req;
+		*kurb = *urb;
 
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 
@@ -1318,7 +1318,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
 			if (uio.uio_rw == UIO_READ) {
-				uiomove(kurb->dmabuf, len, &uio);
+				error = uiomove(kurb->dmabuf, len, &uio);
+				if (error) {
+					usbd_free_xfer(kurb->xfer);
+					free(kurb, M_TEMP, sizeof(*kurb));
+					return (-1);
+				}
 			}
 		}
 		*urb = *kurb;

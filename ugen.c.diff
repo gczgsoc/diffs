@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Wed Jun 24 01:57:15 2015
++++ ugen.c	Wed Jun 24 21:26:18 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -98,7 +98,7 @@
 +		if (kurb == NULL)
 +			return (ENOMEM);
 +
-+		kurb->req = urb->req;
++		*kurb = *urb;
 +
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
 +
@@ -108,7 +108,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1229,102 @@
+@@ -1175,34 +1229,107 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -213,7 +213,12 @@
 -				error = uiomovei(ptr, len, &uio);
 -				if (error)
 -					goto ret;
-+				uiomove(kurb->dmabuf, len, &uio);
++				error = uiomove(kurb->dmabuf, len, &uio);
++				if (error) {
++					usbd_free_xfer(kurb->xfer);
++					free(kurb, M_TEMP, sizeof(*kurb));
++					return (-1);
++				}
  			}
  		}
 -	ret:
@@ -227,7 +232,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1259,6 +1381,14 @@
+@@ -1259,6 +1386,14 @@
  #endif
  	s = splusb();
  	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
