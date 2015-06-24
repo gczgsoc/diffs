@@ -683,8 +683,8 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 			return _errno_to_libusb(errno);
 		}
 
-		pfd->fd = dpriv->fd;
-		pdf->events = POLLIN | POLLRDNORM;
+		pfd.fd = dpriv->fd;
+		pfd.events = POLLIN | POLLRDNORM;
 		if ((poll(&pfd, 1, INFTIM)) < 0) {
 			return _errno_to_libusb(errno);
 		}

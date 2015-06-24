@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Tue Jun 23 23:54:35 2015
++++ openbsd_usb.c	Wed Jun 24 21:43:07 2015
 @@ -628,6 +628,9 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
@@ -27,8 +27,8 @@
  			return _errno_to_libusb(errno);
 +		}
 +
-+		pfd->fd = dpriv->fd;
-+		pdf->events = POLLIN | POLLRDNORM;
++		pfd.fd = dpriv->fd;
++		pfd.events = POLLIN | POLLRDNORM;
 +		if ((poll(&pfd, 1, INFTIM)) < 0) {
 +			return _errno_to_libusb(errno);
 +		}
