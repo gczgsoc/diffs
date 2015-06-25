@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Wed Jun 24 21:26:18 2015
++++ ugen.c	Thu Jun 25 02:33:58 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -232,18 +232,88 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1259,6 +1386,14 @@
+@@ -1248,44 +1375,55 @@
+ 	if (sce == NULL)
+ 		return (POLLERR);
+ #ifdef DIAGNOSTIC
+-	if (!sce->edesc) {
+-		printf("ugenpoll: no edesc\n");
+-		return (POLLERR);
++	if (UGENENDPOINT(dev) != USB_CONTROL_ENDPOINT) {
++		if (!sce->edesc) {
++			printf("ugenpoll: no edesc\n");
++			return (POLLERR);
++		}
++		if (!sce->pipeh) {
++			printf("ugenpoll: no pipe\n");
++			return (POLLERR);
++		}
+ 	}
+-	if (!sce->pipeh) {
+-		printf("ugenpoll: no pipe\n");
+-		return (POLLERR);
+-	}
  #endif
  	s = splusb();
- 	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
-+	case UE_CONTROL:
-+		if (events & (POLLIN | POLLRDNORM)) {
-+			if (!TAILQ_EMPTY(&urb_entry_head))
-+				revents |= events & (POLLIN | POLLRDNORM);
-+			else
-+				selrecord(p, &sce->rsel);
-+		}
-+		break;
- 	case UE_INTERRUPT:
+-	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
+-	case UE_INTERRUPT:
++	if (UGENENDPOINT(dev) == USB_CONTROL_ENDPOINT) {
  		if (events & (POLLIN | POLLRDNORM)) {
- 			if (sce->q.c_cc > 0)
+-			if (sce->q.c_cc > 0)
++			if (!TAILQ_EMPTY(&urb_entry_head))
+ 				revents |= events & (POLLIN | POLLRDNORM);
+ 			else
+ 				selrecord(p, &sce->rsel);
+ 		}
+-		break;
+-	case UE_ISOCHRONOUS:
+-		if (events & (POLLIN | POLLRDNORM)) {
+-			if (sce->cur != sce->fill)
+-				revents |= events & (POLLIN | POLLRDNORM);
+-			else
+-				selrecord(p, &sce->rsel);
++	} else {
++		switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
++		case UE_INTERRUPT:
++			if (events & (POLLIN | POLLRDNORM)) {
++				if (sce->q.c_cc > 0)
++					revents |= events & (POLLIN | POLLRDNORM);
++				else
++					selrecord(p, &sce->rsel);
++			}
++			break;
++		case UE_ISOCHRONOUS:
++			if (events & (POLLIN | POLLRDNORM)) {
++				if (sce->cur != sce->fill)
++					revents |= events & (POLLIN | POLLRDNORM);
++				else
++					selrecord(p, &sce->rsel);
++			}
++			break;
++		case UE_BULK:
++			/*
++			 * We have no easy way of determining if a read will
++			 * yield any data or a write will happen.
++			 * Pretend they will.
++			 */
++			revents |= events &
++				   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
++			break;
++		default:
++			break;
+ 		}
+-		break;
+-	case UE_BULK:
+-		/*
+-		 * We have no easy way of determining if a read will
+-		 * yield any data or a write will happen.
+-		 * Pretend they will.
+-		 */
+-		revents |= events &
+-			   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
+-		break;
+-	default:
+-		break;
+ 	}
+ 	splx(s);
+ 	return (revents);

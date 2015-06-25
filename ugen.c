@@ -1375,52 +1375,55 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	if (sce == NULL)
 		return (POLLERR);
 #ifdef DIAGNOSTIC
-	if (!sce->edesc) {
-		printf("ugenpoll: no edesc\n");
-		return (POLLERR);
-	}
-	if (!sce->pipeh) {
-		printf("ugenpoll: no pipe\n");
-		return (POLLERR);
+	if (UGENENDPOINT(dev) != USB_CONTROL_ENDPOINT) {
+		if (!sce->edesc) {
+			printf("ugenpoll: no edesc\n");
+			return (POLLERR);
+		}
+		if (!sce->pipeh) {
+			printf("ugenpoll: no pipe\n");
+			return (POLLERR);
+		}
 	}
 #endif
 	s = splusb();
-	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
-	case UE_CONTROL:
+	if (UGENENDPOINT(dev) == USB_CONTROL_ENDPOINT) {
 		if (events & (POLLIN | POLLRDNORM)) {
 			if (!TAILQ_EMPTY(&urb_entry_head))
 				revents |= events & (POLLIN | POLLRDNORM);
 			else
 				selrecord(p, &sce->rsel);
 		}
-		break;
-	case UE_INTERRUPT:
-		if (events & (POLLIN | POLLRDNORM)) {
-			if (sce->q.c_cc > 0)
-				revents |= events & (POLLIN | POLLRDNORM);
-			else
-				selrecord(p, &sce->rsel);
+	} else {
+		switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
+		case UE_INTERRUPT:
+			if (events & (POLLIN | POLLRDNORM)) {
+				if (sce->q.c_cc > 0)
+					revents |= events & (POLLIN | POLLRDNORM);
+				else
+					selrecord(p, &sce->rsel);
+			}
+			break;
+		case UE_ISOCHRONOUS:
+			if (events & (POLLIN | POLLRDNORM)) {
+				if (sce->cur != sce->fill)
+					revents |= events & (POLLIN | POLLRDNORM);
+				else
+					selrecord(p, &sce->rsel);
+			}
+			break;
+		case UE_BULK:
+			/*
+			 * We have no easy way of determining if a read will
+			 * yield any data or a write will happen.
+			 * Pretend they will.
+			 */
+			revents |= events &
+				   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
+			break;
+		default:
+			break;
 		}
-		break;
-	case UE_ISOCHRONOUS:
-		if (events & (POLLIN | POLLRDNORM)) {
-			if (sce->cur != sce->fill)
-				revents |= events & (POLLIN | POLLRDNORM);
-			else
-				selrecord(p, &sce->rsel);
-		}
-		break;
-	case UE_BULK:
-		/*
-		 * We have no easy way of determining if a read will
-		 * yield any data or a write will happen.
-		 * Pretend they will.
-		 */
-		revents |= events &
-			   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
-		break;
-	default:
-		break;
 	}
 	splx(s);
 	return (revents);
