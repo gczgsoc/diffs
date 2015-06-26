@@ -142,15 +142,9 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
 	struct ctl_urb *urb = priv;
 
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
-		/* Only if USBD_SHORT_XFER_OK is set. */
 		urb->actlen = xfer->actlen;
 		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
         }
-	else if (s == USBD_CANCELLED) {
-	}
-	else if (s == USBD_STALLED) {
-	}
-
 	urb->status = (int)s;
 	urb->xfer = xfer;
 
@@ -1174,15 +1168,13 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 	{
 		struct ctl_urb *urb = (void *)addr;
 		struct usb_ctl_request *ur = &urb->req;
+		int len = UGETW(ur->ucr_request.wLength);
 		struct ctl_urb *kurb;
 		struct usbd_xfer *xfer;
-		int len;
+		void *buf;
 		struct iovec iov;
 		struct uio uio;
-		void *ptr = 0;
 		int error = 0;
-
-		len = UGETW(ur->ucr_request.wLength);
 
 		if (!(flag & FWRITE))
 			return (EPERM);
@@ -1194,22 +1186,18 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
 		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
 			return (EINVAL);
-
 		if (len < 0 || len > 32767)
 			return (EINVAL);
 
-		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
-		if (kurb == NULL)
-			return (ENOMEM);
-
-		*kurb = *urb;
-
 		xfer = usbd_alloc_xfer(sc->sc_udev);
-		if (xfer == NULL) {
-			free(kurb, M_TEMP, sizeof(*kurb));
+		if (xfer == NULL)
+			return (ENOMEM);
+		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
+		if (kurb == NULL) {
+			usbd_free_xfer(xfer);
 			return (ENOMEM);
 		}
-
+		*kurb = *urb;
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;
@@ -1222,44 +1210,43 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				ur->ucr_request.bmRequestType & UT_READ ?
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = usbd_alloc_buffer(xfer, len);
-			if (ptr == 0) {
-				free(kurb, M_TEMP, sizeof(*kurb));
+			buf = usbd_alloc_buffer(xfer, len);
+			if (buf == NULL) {
 				usbd_free_xfer(xfer);
+				free(kurb, M_TEMP, sizeof(*kurb));
 				return (ENOMEM);
 			}
 			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomovei(ptr, len, &uio);
+				error = uiomovei(buf, len, &uio);
 				if (error) {
-					free(kurb, M_TEMP, sizeof(*kurb));
 					usbd_free_xfer(xfer);
+					free(kurb, M_TEMP, sizeof(*kurb));
 					return (error);
 				}
 			}
 		}
 
-		err = usbd_request_async(xfer,
+		error = usbd_request_async(xfer,
 		    &ur->ucr_request, kurb, (usbd_callback)
 		    ugen_request_async_callback);
 
-		if (err) {
-			error = EIO;
+		if (error) {
 			free(kurb, M_TEMP, sizeof(*kurb));
 			usbd_free_xfer(xfer);
 			return (error);
 		}
-		return (0);
+		break;
 	}
 	case USB_GET_COMPLETED:
 	{
 		struct ctl_urb *urb = (struct ctl_urb *)addr;
 		struct ctl_urb *kurb;
 		struct usb_ctl_request *ur;
-		int s;
-		int error = 0;
 		int len;
 		struct iovec iov;
 		struct uio uio;
+		int s;
+		int error = 0;
 
 		s = splusb();
 		kurb = TAILQ_FIRST(&urb_entry_head);
@@ -1292,7 +1279,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 					if (error) {
 						usbd_free_xfer(kurb->xfer);
 						free(kurb, M_TEMP, sizeof(*kurb));
-						return (EIO);
+						return (error);
 					}
 				}
 			}
@@ -1300,7 +1287,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		*urb = *kurb;
 		usbd_free_xfer(kurb->xfer);
 		free(kurb, M_TEMP, sizeof(*kurb));
-		return (0);
+		break;
 	}
 	case USB_GET_DEVICEINFO:
 		usbd_fill_deviceinfo(sc->sc_udev,

@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 26 18:10:30 2015
++++ ugen.c	Fri Jun 26 19:53:58 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,7 +23,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,27 @@
+@@ -130,6 +136,21 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -33,15 +33,9 @@
 +	struct ctl_urb *urb = priv;
 +
 +        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
-+		/* Only if USBD_SHORT_XFER_OK is set. */
 +		urb->actlen = xfer->actlen;
 +		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
 +        }
-+	else if (s == USBD_CANCELLED) {
-+	}
-+	else if (s == USBD_STALLED) {
-+	}
-+
 +	urb->status = (int)s;
 +	urb->xfer = xfer;
 +
@@ -51,7 +45,7 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +177,8 @@
+@@ -150,6 +171,8 @@
  	usbd_status err;
  	int conf;
  
@@ -60,65 +54,62 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -1143,13 +1172,18 @@
+@@ -1143,11 +1166,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
 -		struct usb_ctl_request *ur = (void *)addr;
--		int len = UGETW(ur->ucr_request.wLength);
 +		struct ctl_urb *urb = (void *)addr;
 +		struct usb_ctl_request *ur = &urb->req;
+ 		int len = UGETW(ur->ucr_request.wLength);
 +		struct ctl_urb *kurb;
 +		struct usbd_xfer *xfer;
-+		int len;
++		void *buf;
  		struct iovec iov;
  		struct uio uio;
- 		void *ptr = 0;
+-		void *ptr = 0;
  		int error = 0;
  
-+		len = UGETW(ur->ucr_request.wLength);
-+
  		if (!(flag & FWRITE))
- 			return (EPERM);
- 		/* Avoid requests that would damage the bus integrity. */
-@@ -1163,6 +1197,19 @@
- 
+@@ -1160,9 +1186,18 @@
+ 		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
+ 		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
+ 			return (EINVAL);
+-
  		if (len < 0 || len > 32767)
  			return (EINVAL);
 +
-+		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
-+		if (kurb == NULL)
-+			return (ENOMEM);
-+
-+		*kurb = *urb;
-+
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
-+		if (xfer == NULL) {
-+			free(kurb, M_TEMP, sizeof(*kurb));
++		if (xfer == NULL)
++			return (ENOMEM);
++		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
++		if (kurb == NULL) {
++			usbd_free_xfer(xfer);
 +			return (ENOMEM);
 +		}
-+
++		*kurb = *urb;
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1222,85 @@
+@@ -1175,34 +1210,84 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
 -			ptr = malloc(len, M_TEMP, M_WAITOK);
-+			ptr = usbd_alloc_buffer(xfer, len);
-+			if (ptr == 0) {
-+				free(kurb, M_TEMP, sizeof(*kurb));
++			buf = usbd_alloc_buffer(xfer, len);
++			if (buf == NULL) {
 +				usbd_free_xfer(xfer);
++				free(kurb, M_TEMP, sizeof(*kurb));
 +				return (ENOMEM);
 +			}
  			if (uio.uio_rw == UIO_WRITE) {
- 				error = uiomovei(ptr, len, &uio);
+-				error = uiomovei(ptr, len, &uio);
 -				if (error)
 -					goto ret;
++				error = uiomovei(buf, len, &uio);
 +				if (error) {
-+					free(kurb, M_TEMP, sizeof(*kurb));
 +					usbd_free_xfer(xfer);
++					free(kurb, M_TEMP, sizeof(*kurb));
 +					return (error);
 +				}
  			}
@@ -126,14 +117,15 @@
 -		sce = &sc->sc_endpoints[endpt][IN];
 -		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
 -			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
+-		if (err) {
+-			error = EIO;
+-			goto ret;
 +
-+		err = usbd_request_async(xfer,
++		error = usbd_request_async(xfer,
 +		    &ur->ucr_request, kurb, (usbd_callback)
 +		    ugen_request_async_callback);
 +
- 		if (err) {
- 			error = EIO;
--			goto ret;
++		if (error) {
 +			free(kurb, M_TEMP, sizeof(*kurb));
 +			usbd_free_xfer(xfer);
 +			return (error);
@@ -146,18 +138,18 @@
 -				error = uiomovei(ptr, len, &uio);
 -				if (error)
 -					goto ret;
-+		return (0);
++		break;
 +	}
 +	case USB_GET_COMPLETED:
 +	{
 +		struct ctl_urb *urb = (struct ctl_urb *)addr;
 +		struct ctl_urb *kurb;
 +		struct usb_ctl_request *ur;
-+		int s;
-+		int error = 0;
 +		int len;
 +		struct iovec iov;
 +		struct uio uio;
++		int s;
++		int error = 0;
 +
 +		s = splusb();
 +		kurb = TAILQ_FIRST(&urb_entry_head);
@@ -190,7 +182,7 @@
 +					if (error) {
 +						usbd_free_xfer(kurb->xfer);
 +						free(kurb, M_TEMP, sizeof(*kurb));
-+						return (EIO);
++						return (error);
 +					}
 +				}
  			}
@@ -202,11 +194,11 @@
 +		*urb = *kurb;
 +		usbd_free_xfer(kurb->xfer);
 +		free(kurb, M_TEMP, sizeof(*kurb));
-+		return (0);
++		break;
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1346,55 @@
+@@ -1248,44 +1333,55 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC
