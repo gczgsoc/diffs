@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 26 15:47:38 2015
++++ ugen.c	Fri Jun 26 18:10:30 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,7 +23,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,37 @@
+@@ -130,6 +136,27 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -31,7 +31,6 @@
 +
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +	struct ctl_urb *urb = priv;
-+	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 +
 +        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 +		/* Only if USBD_SHORT_XFER_OK is set. */
@@ -47,21 +46,12 @@
 +	urb->xfer = xfer;
 +
 +	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
-+	if (sce != NULL) {
-+		wakeup(sce);
-+		//if (sce->state & UGEN_ASLP) {
-+		//	printf("is asleep\n");
-+		//	sce->state &= ~UGEN_ASLP;
-+		//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
-+		//	wakeup(sce);
-+		//}
-+	}
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +187,8 @@
+@@ -150,6 +177,8 @@
  	usbd_status err;
  	int conf;
  
@@ -70,15 +60,15 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -1143,13 +1182,18 @@
+@@ -1143,13 +1172,18 @@
  	}
  	case USB_DO_REQUEST:
  	{
 -		struct usb_ctl_request *ur = (void *)addr;
 -		int len = UGETW(ur->ucr_request.wLength);
 +		struct ctl_urb *urb = (void *)addr;
-+		struct ctl_urb *kurb;
 +		struct usb_ctl_request *ur = &urb->req;
++		struct ctl_urb *kurb;
 +		struct usbd_xfer *xfer;
 +		int len;
  		struct iovec iov;
@@ -91,7 +81,7 @@
  		if (!(flag & FWRITE))
  			return (EPERM);
  		/* Avoid requests that would damage the bus integrity. */
-@@ -1163,6 +1207,18 @@
+@@ -1163,6 +1197,19 @@
  
  		if (len < 0 || len > 32767)
  			return (EINVAL);
@@ -103,14 +93,15 @@
 +		*kurb = *urb;
 +
 +		xfer = usbd_alloc_xfer(sc->sc_udev);
-+
-+		if (xfer == NULL)
++		if (xfer == NULL) {
++			free(kurb, M_TEMP, sizeof(*kurb));
 +			return (ENOMEM);
++		}
 +
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1231,114 @@
+@@ -1175,34 +1222,85 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -132,14 +123,13 @@
 +				}
  			}
  		}
-+
- 		sce = &sc->sc_endpoints[endpt][IN];
+-		sce = &sc->sc_endpoints[endpt][IN];
 -		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
 -			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
 +
-+		kurb->sce = sce;
-+
-+		err = usbd_request_async(xfer, &ur->ucr_request, kurb, (usbd_callback) ugen_request_async_callback);
++		err = usbd_request_async(xfer,
++		    &ur->ucr_request, kurb, (usbd_callback)
++		    ugen_request_async_callback);
 +
  		if (err) {
  			error = EIO;
@@ -171,41 +161,14 @@
 +
 +		s = splusb();
 +		kurb = TAILQ_FIRST(&urb_entry_head);
-+//		while (kurb == NULL) {
-+//			printf("didn't skip\n");
-+//			/* Block until transfer completes. */
-+//			sce = &sc->sc_endpoints[endpt][IN];
-+//			if (sce == NULL) {
-+//				splx(s);
-+//				return (EINVAL);
-+//			}
-+//			sce->state |= UGEN_ASLP;
-+//			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
-+//			error = tsleep(sce, PZERO | PCATCH, "ugenri",
-+//			    (sce->timeout * hz) / 1000);
-+//			sce->state &= ~UGEN_ASLP;
-+//			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
-+//			if (usbd_is_dying(sc->sc_udev)) {
-+//				splx(s);
-+//				return (EIO);
-+//			}
-+//			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
-+//				splx(s);
-+//				return (EIO);
-+//			}
-+//			if (error == EINTR) { /* you pressed Ctrl+C */
-+//				splx(s);
-+//				return (EINTR);
-+//			}
-+//			kurb = TAILQ_FIRST(&urb_entry_head);
-+//		}
 +		if (kurb == NULL) {
 +			splx(s);
 +			return (EIO);
 +		}
 +		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
 +		splx(s);
-+		if (kurb->status == USBD_NORMAL_COMPLETION || kurb->status == USBD_SHORT_XFER) {
++		if (kurb->status == USBD_NORMAL_COMPLETION ||
++		    kurb->status == USBD_SHORT_XFER) {
 +			ur = &kurb->req;
 +			len = UGETW(ur->ucr_request.wLength);
 +			if (len > kurb->actlen)
@@ -227,7 +190,7 @@
 +					if (error) {
 +						usbd_free_xfer(kurb->xfer);
 +						free(kurb, M_TEMP, sizeof(*kurb));
-+						return (-1);
++						return (EIO);
 +					}
 +				}
  			}
@@ -243,7 +206,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1384,55 @@
+@@ -1248,44 +1346,55 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC
