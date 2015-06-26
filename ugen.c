@@ -146,22 +146,24 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
 		/* Only if USBD_SHORT_XFER_OK is set. */
 		urb->actlen = xfer->actlen;
 		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
-		urb->xfer = xfer;
-
-		TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
-		if (sce != NULL) {
-			wakeup(sce);
-			//if (sce->state & UGEN_ASLP) {
-			//	printf("is asleep\n");
-			//	sce->state &= ~UGEN_ASLP;
-			//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
-			//	wakeup(sce);
-			//}
-		}
         }
 	else if (s == USBD_CANCELLED) {
 	}
 	else if (s == USBD_STALLED) {
+	}
+
+	urb->status = (int)s;
+	urb->xfer = xfer;
+
+	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+	if (sce != NULL) {
+		wakeup(sce);
+		//if (sce->state & UGEN_ASLP) {
+		//	printf("is asleep\n");
+		//	sce->state &= ~UGEN_ASLP;
+		//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
+		//	wakeup(sce);
+		//}
 	}
 }
 
@@ -1272,57 +1274,64 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 
 		s = splusb();
 		kurb = TAILQ_FIRST(&urb_entry_head);
-		while (kurb == NULL) {
-			/* Block until transfer completes. */
-			sce = &sc->sc_endpoints[endpt][IN];
-			if (sce == NULL) {
-				splx(s);
-				return (EINVAL);
-			}
-			sce->state |= UGEN_ASLP;
-			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
-			error = tsleep(sce, PZERO | PCATCH, "ugenri",
-			    (sce->timeout * hz) / 1000);
-			sce->state &= ~UGEN_ASLP;
-			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
-			if (usbd_is_dying(sc->sc_udev)) {
-				splx(s);
-				return (EIO);
-			}
-			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
-				splx(s);
-				return (EIO);
-			}
-			if (error == EINTR) { /* you pressed Ctrl+C */
-				splx(s);
-				return (EINTR);
-			}
-			kurb = TAILQ_FIRST(&urb_entry_head);
+//		while (kurb == NULL) {
+//			printf("didn't skip\n");
+//			/* Block until transfer completes. */
+//			sce = &sc->sc_endpoints[endpt][IN];
+//			if (sce == NULL) {
+//				splx(s);
+//				return (EINVAL);
+//			}
+//			sce->state |= UGEN_ASLP;
+//			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
+//			error = tsleep(sce, PZERO | PCATCH, "ugenri",
+//			    (sce->timeout * hz) / 1000);
+//			sce->state &= ~UGEN_ASLP;
+//			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
+//			if (usbd_is_dying(sc->sc_udev)) {
+//				splx(s);
+//				return (EIO);
+//			}
+//			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
+//				splx(s);
+//				return (EIO);
+//			}
+//			if (error == EINTR) { /* you pressed Ctrl+C */
+//				splx(s);
+//				return (EINTR);
+//			}
+//			kurb = TAILQ_FIRST(&urb_entry_head);
+//		}
+		if (kurb == NULL) {
+			splx(s);
+			return (EIO);
 		}
 		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
 		splx(s);
-		ur = &kurb->req;
-		len = UGETW(ur->ucr_request.wLength);
-		if (len > kurb->actlen)
-			len = kurb->actlen;
-		if (len != 0) {
-			iov.iov_base = (caddr_t)ur->ucr_data;
-			iov.iov_len = len;
-			uio.uio_iov = &iov;
-			uio.uio_iovcnt = 1;
-			uio.uio_resid = len;
-			uio.uio_offset = 0;
-			uio.uio_segflg = UIO_USERSPACE;
-			uio.uio_rw =
-				ur->ucr_request.bmRequestType & UT_READ ?
-				UIO_READ : UIO_WRITE;
-			uio.uio_procp = p;
-			if (uio.uio_rw == UIO_READ) {
-				error = uiomove(kurb->dmabuf, len, &uio);
-				if (error) {
-					usbd_free_xfer(kurb->xfer);
-					free(kurb, M_TEMP, sizeof(*kurb));
-					return (-1);
+		if (kurb->status == USBD_NORMAL_COMPLETION || kurb->status == USBD_SHORT_XFER) {
+			ur = &kurb->req;
+			len = UGETW(ur->ucr_request.wLength);
+			if (len > kurb->actlen)
+				len = kurb->actlen;
+			if (len != 0) {
+				iov.iov_base = (caddr_t)ur->ucr_data;
+				iov.iov_len = len;
+				uio.uio_iov = &iov;
+				uio.uio_iovcnt = 1;
+				uio.uio_resid = len;
+				uio.uio_offset = 0;
+				uio.uio_segflg = UIO_USERSPACE;
+				uio.uio_rw =
+					ur->ucr_request.bmRequestType & UT_READ ?
+					UIO_READ : UIO_WRITE;
+				uio.uio_procp = p;
+				if (uio.uio_rw == UIO_READ) {
+					error = uiomove(kurb->dmabuf, len, &uio);
+					if (error) {
+						usbd_free_xfer(kurb->xfer);
+						free(kurb, M_TEMP, sizeof(*kurb));
+						return (-1);
+					}
 				}
 			}
 		}

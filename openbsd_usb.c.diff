@@ -1,6 +1,14 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Thu Jun 25 04:40:01 2015
-@@ -74,6 +74,8 @@
++++ openbsd_usb.c	Fri Jun 26 17:25:43 2015
+@@ -29,6 +29,7 @@
+ #include <unistd.h>
+ 
+ #include <dev/usb/usb.h>
++#include <dev/usb/usbdi.h>
+ 
+ #include "libusbi.h"
+ 
+@@ -74,6 +75,8 @@
  static int obsd_submit_transfer(struct usbi_transfer *);
  static int obsd_cancel_transfer(struct usbi_transfer *);
  static void obsd_clear_transfer_priv(struct usbi_transfer *);
@@ -9,7 +17,7 @@
  static int obsd_handle_transfer_completion(struct usbi_transfer *);
  static int obsd_clock_gettime(int, struct timespec *);
  
-@@ -127,7 +129,7 @@
+@@ -127,7 +130,7 @@
  	obsd_cancel_transfer,
  	obsd_clear_transfer_priv,
  
@@ -18,7 +26,7 @@
  	obsd_handle_transfer_completion,
  
  	obsd_clock_gettime,
-@@ -258,6 +260,8 @@
+@@ -258,6 +261,8 @@
  		if (dpriv->fd < 0)
  			return _errno_to_libusb(errno);
  
@@ -27,7 +35,7 @@
  		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
  	}
  
-@@ -270,6 +274,8 @@
+@@ -270,6 +275,8 @@
  	struct handle_priv *hpriv = (struct handle_priv *)handle->os_priv;
  	struct device_priv *dpriv = (struct device_priv *)handle->dev->os_priv;
  
@@ -36,7 +44,7 @@
  	if (dpriv->devname) {
  		usbi_dbg("close: fd %d", dpriv->fd);
  
-@@ -470,12 +476,14 @@
+@@ -470,12 +477,14 @@
  {
  	struct libusb_transfer *transfer;
  	struct handle_priv *hpriv;
@@ -51,20 +59,21 @@
  
  	switch (transfer->type) {
  	case LIBUSB_TRANSFER_TYPE_CONTROL:
-@@ -506,7 +514,11 @@
+@@ -506,7 +515,12 @@
  	if (err)
  		return (err);
  
 -	usbi_signal_transfer_completion(itransfer);
-+	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
++	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
 +		if (dpriv->devname == NULL)
 +			usbi_signal_transfer_completion(itransfer);
-+	else
++	} else {
 +		usbi_signal_transfer_completion(itransfer);
++	}
  
  	return (LIBUSB_SUCCESS);
  }
-@@ -528,6 +540,83 @@
+@@ -528,6 +542,106 @@
  }
  
  int
@@ -118,23 +127,46 @@
 +		}
 +
 +		usbi_dbg("trying get completed");
-+		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) < 0) {
++
++		err = 0;
++		while (1) {
++			if (err = ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
++				usbi_dbg("error ioctl");
++				err = 0;
++				break;
++			}
++			usbi_dbg("got completed");
++
++			usbi_dbg("got transfer %llx", (unsigned long long int) get_urb.user_context);
++
++			itransfer = get_urb.user_context;
++
++			//usbi_mutex_lock(&itransfer->lock);
++
++			usbi_dbg("geturb status %d", get_urb.status);
++
++			if (get_urb.status == USBD_NORMAL_COMPLETION || get_urb.status == USBD_SHORT_XFER) {
++
++				itransfer->transferred += get_urb.actlen;
++
++				usbi_dbg("transferred %d", itransfer->transferred);
++				//usbi_mutex_unlock(&itransfer->lock);
++
++				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED))) {
++					usbi_dbg("error completing");
++					break;
++				}
++			} else {
++				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_ERROR))) {
++					usbi_dbg("error completing");
++					break;
++				}
++			}
++		}
++		if (err) {
 +			err = errno;
 +			break;
 +		}
-+		usbi_dbg("got completed");
-+
-+		itransfer = get_urb.user_context;
-+
-+		usbi_mutex_lock(&itransfer->lock);
-+
-+		itransfer->transferred += get_urb.actlen;
-+
-+		usbi_dbg("transferred %d", itransfer->transferred);
-+		usbi_mutex_unlock(&itransfer->lock);
-+
-+		if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED)))
-+			break;
 +	}
 +	pthread_mutex_unlock(&ctx->open_devs_lock);
 +
@@ -148,7 +180,7 @@
  obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
  	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-@@ -628,6 +717,7 @@
+@@ -628,6 +742,7 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
  	struct usb_ctl_request req;
@@ -156,7 +188,7 @@
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -669,11 +759,18 @@
+@@ -669,11 +784,18 @@
  		}
  		close(fd);
  	} else {

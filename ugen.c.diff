@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Thu Jun 25 02:33:58 2015
++++ ugen.c	Fri Jun 26 15:47:38 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,7 +23,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,35 @@
+@@ -130,6 +136,37 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -37,29 +37,31 @@
 +		/* Only if USBD_SHORT_XFER_OK is set. */
 +		urb->actlen = xfer->actlen;
 +		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
-+		urb->xfer = xfer;
-+
-+		TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
-+		if (sce != NULL) {
-+			wakeup(sce);
-+			//if (sce->state & UGEN_ASLP) {
-+			//	printf("is asleep\n");
-+			//	sce->state &= ~UGEN_ASLP;
-+			//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
-+			//	wakeup(sce);
-+			//}
-+		}
 +        }
 +	else if (s == USBD_CANCELLED) {
 +	}
 +	else if (s == USBD_STALLED) {
++	}
++
++	urb->status = (int)s;
++	urb->xfer = xfer;
++
++	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
++	if (sce != NULL) {
++		wakeup(sce);
++		//if (sce->state & UGEN_ASLP) {
++		//	printf("is asleep\n");
++		//	sce->state &= ~UGEN_ASLP;
++		//	DPRINTFN(5, ("ugen_intr: waking %p\n", sce));
++		//	wakeup(sce);
++		//}
 +	}
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +185,8 @@
+@@ -150,6 +187,8 @@
  	usbd_status err;
  	int conf;
  
@@ -68,7 +70,7 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -1143,13 +1180,18 @@
+@@ -1143,13 +1182,18 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -89,7 +91,7 @@
  		if (!(flag & FWRITE))
  			return (EPERM);
  		/* Avoid requests that would damage the bus integrity. */
-@@ -1163,6 +1205,18 @@
+@@ -1163,6 +1207,18 @@
  
  		if (len < 0 || len > 32767)
  			return (EINVAL);
@@ -108,7 +110,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1229,107 @@
+@@ -1175,34 +1231,114 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -149,6 +151,11 @@
 -		/* Only if USBD_SHORT_XFER_OK is set. */
 -		if (len > ur->ucr_actlen)
 -			len = ur->ucr_actlen;
+-		if (len != 0) {
+-			if (uio.uio_rw == UIO_READ) {
+-				error = uiomovei(ptr, len, &uio);
+-				if (error)
+-					goto ret;
 +		return (0);
 +	}
 +	case USB_GET_COMPLETED:
@@ -164,60 +171,64 @@
 +
 +		s = splusb();
 +		kurb = TAILQ_FIRST(&urb_entry_head);
-+		while (kurb == NULL) {
-+			/* Block until transfer completes. */
-+			sce = &sc->sc_endpoints[endpt][IN];
-+			if (sce == NULL) {
-+				splx(s);
-+				return (EINVAL);
-+			}
-+			sce->state |= UGEN_ASLP;
-+			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
-+			error = tsleep(sce, PZERO | PCATCH, "ugenri",
-+			    (sce->timeout * hz) / 1000);
-+			sce->state &= ~UGEN_ASLP;
-+			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
-+			if (usbd_is_dying(sc->sc_udev)) {
-+				splx(s);
-+				return (EIO);
-+			}
-+			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
-+				splx(s);
-+				return (EIO);
-+			}
-+			if (error == EINTR) { /* you pressed Ctrl+C */
-+				splx(s);
-+				return (EINTR);
-+			}
-+			kurb = TAILQ_FIRST(&urb_entry_head);
++//		while (kurb == NULL) {
++//			printf("didn't skip\n");
++//			/* Block until transfer completes. */
++//			sce = &sc->sc_endpoints[endpt][IN];
++//			if (sce == NULL) {
++//				splx(s);
++//				return (EINVAL);
++//			}
++//			sce->state |= UGEN_ASLP;
++//			DPRINTFN(5, ("ugengetcompleted: sleep on %p\n", sce));
++//			error = tsleep(sce, PZERO | PCATCH, "ugenri",
++//			    (sce->timeout * hz) / 1000);
++//			sce->state &= ~UGEN_ASLP;
++//			DPRINTFN(5, ("ugengetcompleted: woke, error=%d\n", error));
++//			if (usbd_is_dying(sc->sc_udev)) {
++//				splx(s);
++//				return (EIO);
++//			}
++//			if (error == EWOULDBLOCK) {	/* timeout, return 0 */
++//				splx(s);
++//				return (EIO);
++//			}
++//			if (error == EINTR) { /* you pressed Ctrl+C */
++//				splx(s);
++//				return (EINTR);
++//			}
++//			kurb = TAILQ_FIRST(&urb_entry_head);
++//		}
++		if (kurb == NULL) {
++			splx(s);
++			return (EIO);
 +		}
 +		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
 +		splx(s);
-+		ur = &kurb->req;
-+		len = UGETW(ur->ucr_request.wLength);
-+		if (len > kurb->actlen)
-+			len = kurb->actlen;
- 		if (len != 0) {
-+			iov.iov_base = (caddr_t)ur->ucr_data;
-+			iov.iov_len = len;
-+			uio.uio_iov = &iov;
-+			uio.uio_iovcnt = 1;
-+			uio.uio_resid = len;
-+			uio.uio_offset = 0;
-+			uio.uio_segflg = UIO_USERSPACE;
-+			uio.uio_rw =
-+				ur->ucr_request.bmRequestType & UT_READ ?
-+				UIO_READ : UIO_WRITE;
-+			uio.uio_procp = p;
- 			if (uio.uio_rw == UIO_READ) {
--				error = uiomovei(ptr, len, &uio);
--				if (error)
--					goto ret;
-+				error = uiomove(kurb->dmabuf, len, &uio);
-+				if (error) {
-+					usbd_free_xfer(kurb->xfer);
-+					free(kurb, M_TEMP, sizeof(*kurb));
-+					return (-1);
++		if (kurb->status == USBD_NORMAL_COMPLETION || kurb->status == USBD_SHORT_XFER) {
++			ur = &kurb->req;
++			len = UGETW(ur->ucr_request.wLength);
++			if (len > kurb->actlen)
++				len = kurb->actlen;
++			if (len != 0) {
++				iov.iov_base = (caddr_t)ur->ucr_data;
++				iov.iov_len = len;
++				uio.uio_iov = &iov;
++				uio.uio_iovcnt = 1;
++				uio.uio_resid = len;
++				uio.uio_offset = 0;
++				uio.uio_segflg = UIO_USERSPACE;
++				uio.uio_rw =
++					ur->ucr_request.bmRequestType & UT_READ ?
++					UIO_READ : UIO_WRITE;
++				uio.uio_procp = p;
++				if (uio.uio_rw == UIO_READ) {
++					error = uiomove(kurb->dmabuf, len, &uio);
++					if (error) {
++						usbd_free_xfer(kurb->xfer);
++						free(kurb, M_TEMP, sizeof(*kurb));
++						return (-1);
++					}
 +				}
  			}
  		}
@@ -232,7 +243,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1375,55 @@
+@@ -1248,44 +1384,55 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC

@@ -29,6 +29,7 @@
 #include <unistd.h>
 
 #include <dev/usb/usb.h>
+#include <dev/usb/usbdi.h>
 
 #include "libusbi.h"
 
@@ -514,11 +515,12 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	if (err)
 		return (err);
 
-	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
+	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL) {
 		if (dpriv->devname == NULL)
 			usbi_signal_transfer_completion(itransfer);
-	else
+	} else {
 		usbi_signal_transfer_completion(itransfer);
+	}
 
 	return (LIBUSB_SUCCESS);
 }
@@ -590,23 +592,46 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 		}
 
 		usbi_dbg("trying get completed");
-		if ((ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) < 0) {
+
+		err = 0;
+		while (1) {
+			if (err = ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
+				usbi_dbg("error ioctl");
+				err = 0;
+				break;
+			}
+			usbi_dbg("got completed");
+
+			usbi_dbg("got transfer %llx", (unsigned long long int) get_urb.user_context);
+
+			itransfer = get_urb.user_context;
+
+			//usbi_mutex_lock(&itransfer->lock);
+
+			usbi_dbg("geturb status %d", get_urb.status);
+
+			if (get_urb.status == USBD_NORMAL_COMPLETION || get_urb.status == USBD_SHORT_XFER) {
+
+				itransfer->transferred += get_urb.actlen;
+
+				usbi_dbg("transferred %d", itransfer->transferred);
+				//usbi_mutex_unlock(&itransfer->lock);
+
+				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED))) {
+					usbi_dbg("error completing");
+					break;
+				}
+			} else {
+				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_ERROR))) {
+					usbi_dbg("error completing");
+					break;
+				}
+			}
+		}
+		if (err) {
 			err = errno;
 			break;
 		}
-		usbi_dbg("got completed");
-
-		itransfer = get_urb.user_context;
-
-		usbi_mutex_lock(&itransfer->lock);
-
-		itransfer->transferred += get_urb.actlen;
-
-		usbi_dbg("transferred %d", itransfer->transferred);
-		usbi_mutex_unlock(&itransfer->lock);
-
-		if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED)))
-			break;
 	}
 	pthread_mutex_unlock(&ctx->open_devs_lock);
 

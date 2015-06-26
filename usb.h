@@ -620,6 +620,7 @@ struct ctl_urb {
 	int actlen;
 	void *sce;
 	void *dmabuf;
+	int status;
 	TAILQ_ENTRY(ctl_urb) entries;
 	void *user_context;
 };
