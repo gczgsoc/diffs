@@ -552,10 +552,9 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 	struct ctl_urb get_urb;
 	struct pollfd *pollfd;
 	int i, err = 0;
+	int error_code = LIBUSB_TRANSFER_COMPLETED;
 
 	usbi_dbg("");
-
-	usbi_dbg("handle_events called");
 
 	pthread_mutex_lock(&ctx->open_devs_lock);
 	for (i = 0; i < nfds && num_ready > 0; i++) {
@@ -582,50 +581,36 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 			err = ENOENT;
 			break;
 		}
-		usbi_dbg("got an event");
 
 		if (pollfd->revents & POLLERR) {
 			usbi_dbg("got a disconnect event");
-			usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[0]);
+			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 			usbi_handle_disconnect(handle);
 			continue;
 		}
 
-		usbi_dbg("trying get completed");
-
-		err = 0;
 		while (1) {
 			if (err = ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
-				usbi_dbg("error ioctl");
 				err = 0;
 				break;
 			}
-			usbi_dbg("got completed");
-
-			usbi_dbg("got transfer %llx", (unsigned long long int) get_urb.user_context);
-
 			itransfer = get_urb.user_context;
-
-			//usbi_mutex_lock(&itransfer->lock);
 
 			usbi_dbg("geturb status %d", get_urb.status);
 
-			if (get_urb.status == USBD_NORMAL_COMPLETION || get_urb.status == USBD_SHORT_XFER) {
-
+			if (get_urb.status == USBD_NORMAL_COMPLETION ||
+			    get_urb.status == USBD_SHORT_XFER) {
+				usbi_mutex_lock(&itransfer->lock);
 				itransfer->transferred += get_urb.actlen;
-
 				usbi_dbg("transferred %d", itransfer->transferred);
-				//usbi_mutex_unlock(&itransfer->lock);
+				usbi_mutex_unlock(&itransfer->lock);
 
-				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED))) {
-					usbi_dbg("error completing");
-					break;
-				}
-			} else {
-				if ((err = usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_ERROR))) {
-					usbi_dbg("error completing");
-					break;
-				}
+				error_code = LIBUSB_TRANSFER_COMPLETED;
+			} else
+				error_code = LIBUSB_TRANSFER_ERROR;
+			if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
+				usbi_dbg("error completing");
+				break;
 			}
 		}
 		if (err) {
