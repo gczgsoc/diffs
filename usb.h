@@ -618,7 +618,6 @@ struct ctl_urb {
 	struct usb_ctl_request req;
 	void *xfer;
 	int actlen;
-	void *sce;
 	void *dmabuf;
 	int status;
 	TAILQ_ENTRY(ctl_urb) entries;
