@@ -590,6 +590,7 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 		}
 
 		while (1) {
+repeat:
 			if (err = ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
 				err = 0;
 				break;
@@ -598,16 +599,45 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 
 			usbi_dbg("geturb status %d", get_urb.status);
 
-			if (get_urb.status == USBD_NORMAL_COMPLETION ||
-			    get_urb.status == USBD_SHORT_XFER) {
+			switch(get_urb.status) {
+			case USBD_NORMAL_COMPLETION:
+			case USBD_SHORT_XFER:
 				usbi_mutex_lock(&itransfer->lock);
 				itransfer->transferred += get_urb.actlen;
 				usbi_dbg("transferred %d", itransfer->transferred);
 				usbi_mutex_unlock(&itransfer->lock);
 
 				error_code = LIBUSB_TRANSFER_COMPLETED;
-			} else
+				break;
+			case USBD_IN_PROGRESS:
+				goto repeat;
+			/* errors */
+			case USBD_CANCELLED:
+				error_code = LIBUSB_TRANSFER_CANCELLED;
+				break;
+			case USBD_STALLED:
+				error_code = LIBUSB_TRANSFER_STALL;
+				break;
+			case USBD_PENDING_REQUESTS:
+			case USBD_NOT_STARTED:
+			case USBD_INVAL:
+			case USBD_NOMEM:
+			case USBD_BAD_ADDRESS:
+			case USBD_IN_USE:
+			case USBD_NO_ADDR:
+			case USBD_SET_ADDR_FAILED:
+			case USBD_NO_POWER:
+			case USBD_TOO_DEEP:
+			case USBD_IOERROR:
+			case USBD_NOT_CONFIGURED:
+			case USBD_TIMEOUT:
+			case USBD_INTERRUPTED:
+
+			case USBD_ERROR_MAX:
+			default:
 				error_code = LIBUSB_TRANSFER_ERROR;
+				break;
+			}
 			if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
 				usbi_dbg("error completing");
 				break;
