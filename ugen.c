@@ -140,6 +140,7 @@ TAILQ_HEAD(, ctl_urb) urb_entry_head;
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ctl_urb *urb = priv;
+	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 		urb->actlen = xfer->actlen;
@@ -149,6 +150,7 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
 	urb->xfer = xfer;
 
 	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+	selwakeup(&sce->rsel);
 }
 
 int
@@ -1225,6 +1227,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				}
 			}
 		}
+
+		sce = &sc->sc_endpoints[endpt][IN];
+		kurb->sce = sce;
 
 		error = usbd_request_async(xfer,
 		    &ur->ucr_request, kurb, (usbd_callback)

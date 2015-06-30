@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Fri Jun 26 19:53:58 2015
++++ ugen.c	Tue Jun 30 17:38:17 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,7 +23,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,21 @@
+@@ -130,6 +136,23 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -31,6 +31,7 @@
 +
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +	struct ctl_urb *urb = priv;
++	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 +
 +        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
 +		urb->actlen = xfer->actlen;
@@ -40,12 +41,13 @@
 +	urb->xfer = xfer;
 +
 +	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
++	selwakeup(&sce->rsel);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +171,8 @@
+@@ -150,6 +173,8 @@
  	usbd_status err;
  	int conf;
  
@@ -54,7 +56,7 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -1143,11 +1166,14 @@
+@@ -1143,11 +1168,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -71,7 +73,7 @@
  		int error = 0;
  
  		if (!(flag & FWRITE))
-@@ -1160,9 +1186,18 @@
+@@ -1160,9 +1188,18 @@
  		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
  		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
  			return (EINVAL);
@@ -91,7 +93,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1210,84 @@
+@@ -1175,34 +1212,87 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -114,12 +116,14 @@
 +				}
  			}
  		}
--		sce = &sc->sc_endpoints[endpt][IN];
++
+ 		sce = &sc->sc_endpoints[endpt][IN];
 -		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
 -			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
 -		if (err) {
 -			error = EIO;
 -			goto ret;
++		kurb->sce = sce;
 +
 +		error = usbd_request_async(xfer,
 +		    &ur->ucr_request, kurb, (usbd_callback)
@@ -198,7 +202,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1333,55 @@
+@@ -1248,44 +1338,55 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC
