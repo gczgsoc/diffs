@@ -618,6 +618,9 @@ struct ctl_urb {
 	struct usb_ctl_request req;
 	void *xfer;
 	int actlen;
+	int continuation;
+	int error;
+	void *buffer;
 	void *dmabuf;
 	int status;
 	TAILQ_ENTRY(ctl_urb) entries;
@@ -764,7 +767,9 @@ struct usb_device_stats {
 #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
-#define USB_GET_COMPLETED       _IOWR('U', 115, struct ctl_urb)
+#define USB_GET_COMPLETED	_IOWR('U', 115, struct ctl_urb)
+#define USB_ASYNC_SUBMIT	_IOWR('U', 116, struct ctl_urb)
+#define USB_ASYNC_COMPLETE	_IOWR('U', 117, struct ctl_urb)
 
 /* Modem device */
 #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)

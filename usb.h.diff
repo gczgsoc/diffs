@@ -1,5 +1,5 @@
 --- usb.h.orig	Thu Jun  4 13:37:23 2015
-+++ usb.h	Fri Jun 26 18:28:10 2015
++++ usb.h	Tue Jun 30 15:50:06 2015
 @@ -41,6 +41,8 @@
  
  #include <sys/ioctl.h>
@@ -9,7 +9,7 @@
  #define USB_STACK_VERSION 2
  
  #define USB_MAX_DEVICES 128
-@@ -612,6 +614,16 @@
+@@ -612,6 +614,19 @@
  	int	ucr_actlen;		/* actual length transferred */
  };
  
@@ -17,6 +17,9 @@
 +	struct usb_ctl_request req;
 +	void *xfer;
 +	int actlen;
++	int continuation;
++	int error;
++	void *buffer;
 +	void *dmabuf;
 +	int status;
 +	TAILQ_ENTRY(ctl_urb) entries;
@@ -26,7 +29,7 @@
  struct usb_alt_interface {
  	int	uai_config_index;
  	int	uai_interface_index;
-@@ -748,10 +760,11 @@
+@@ -748,10 +763,13 @@
  #define USB_GET_ENDPOINT_DESC	_IOWR('U', 108, struct usb_endpoint_desc)
  #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
  #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
@@ -35,7 +38,9 @@
  #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
  #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
  #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
-+#define USB_GET_COMPLETED       _IOWR('U', 115, struct ctl_urb)
++#define USB_GET_COMPLETED	_IOWR('U', 115, struct ctl_urb)
++#define USB_ASYNC_SUBMIT	_IOWR('U', 116, struct ctl_urb)
++#define USB_ASYNC_COMPLETE	_IOWR('U', 117, struct ctl_urb)
  
  /* Modem device */
  #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)

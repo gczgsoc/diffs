@@ -499,6 +499,13 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 		err = _sync_gen_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_BULK:
+		if (IS_XFEROUT(transfer) &&
+		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
+			err = LIBUSB_ERROR_NOT_SUPPORTED;
+			break;
+		}
+		err = _sync_bulk_transfer(itransfer);
+		break;
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 		if (IS_XFEROUT(transfer) &&
 		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
@@ -853,6 +860,64 @@ _access_endpoint(struct libusb_transfer *transfer)
 	return (hpriv->endpoints[endpt]);
 }
 
+int
+_sync_bulk_transfer(struct usbi_transfer *itransfer)
+{
+	struct libusb_transfer *transfer;
+	struct device_priv *dpriv;
+	struct ctl_urb put_urb;
+	struct ctl_urb get_urb;
+	int fd, nr = 1;
+
+	usbi_dbg("");
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	/*
+	 * Bulk, Interrupt or Isochronous transfer depends on the
+	 * endpoint and thus the node to open.
+	 */
+	if ((fd = _access_endpoint(transfer)) < 0)
+		return _errno_to_libusb(errno);
+
+	if ((ioctl(fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
+		return _errno_to_libusb(errno);
+
+	if (IS_XFERIN(transfer)) {
+		if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
+				return _errno_to_libusb(errno);
+
+		put_urb.buffer = transfer->buffer;
+		put_urb.length = transfer->length;
+		put_urb.user_context = itransfer;
+		usbi_dbg("submitting transfer");
+		if (nr = ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
+			return _errno_to_libusb(errno);
+		usbi_dbg("transfer submitted");
+		while (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) { }
+		if (put_urb.user_context == get_urb.user_context) {
+			usbi_dbg("transfer received");
+		} else {
+			usbi_dbg("wrong transfer received");
+			return (-1);
+		}
+		itransfer->transferred = get_urb->length;
+	} else {
+		nr = write(fd, transfer->buffer, transfer->length);
+		if (nr < 0)
+			return _errno_to_libusb(errno);
+
+		itransfer->transferred = nr;
+	}
+
+
+	return (0);
+}
 int
 _sync_gen_transfer(struct usbi_transfer *itransfer)
 {
