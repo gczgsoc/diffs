@@ -618,6 +618,7 @@ struct ctl_urb {
 	struct usb_ctl_request req;
 	void *xfer;
 	int actlen;
+	void *sce;
 	int continuation;
 	int error;
 	void *buffer;
