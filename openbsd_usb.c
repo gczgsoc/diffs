@@ -872,6 +872,7 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 	int bulk_buffer_len = 1024;
 	int num_urbs = 0;
 	int last_urb_partial = 0;
+	struct pollfd pfd;
 
 	usbi_dbg("");
 
@@ -907,6 +908,9 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 		}
 		usbi_dbg("num_urbs %d", num_urbs);
 
+		pfd.fd = fd;
+		pfd.events = POLLIN | POLLRDNORM;
+
 		for (int i = 0; i < num_urbs; i++) {
 			usbi_dbg("urb %d", i);
 			put_urb.buffer = transfer->buffer + (i * bulk_buffer_len);
@@ -920,7 +924,10 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 			put_urb.user_context = itransfer;
 			if (nr = ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
 				return _errno_to_libusb(errno);
-			while (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) { }
+			if ((poll(&pfd, 1, INFTIM)) < 0)
+				return _errno_to_libusb(errno);
+			if (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb))
+				return _errno_to_libusb(errno);
 			if (put_urb.user_context == get_urb.user_context) {
 				usbi_dbg("transferred %d", get_urb.actlen);
 				itransfer->transferred += get_urb.actlen;

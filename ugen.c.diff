@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Wed Jul  1 17:06:11 2015
++++ ugen.c	Wed Jul  1 20:30:45 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,7 +23,7 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,37 @@
+@@ -130,6 +136,39 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
@@ -46,6 +46,7 @@
 +
 +void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +	struct ctl_urb *urb = priv;
++	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 +	/* more transfers left? otherwise, insert kurb onto
 +	 * completeded queue */
 +        if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
@@ -56,12 +57,13 @@
 +	urb->xfer = xfer;
 +
 +	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
++	selwakeup(&sce->rsel);
 +}
 +
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +187,8 @@
+@@ -150,6 +189,8 @@
  	usbd_status err;
  	int conf;
  
@@ -70,7 +72,7 @@
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -986,6 +1025,110 @@
+@@ -986,6 +1027,111 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -108,6 +110,7 @@
 +		sce = &sc->sc_endpoints[endpt][IN];
 +		if (sce->state & UGEN_SHORT_OK)
 +			flags = USBD_SHORT_XFER_OK;
++		kurb->sce = sce;
 +		usbd_setup_xfer(xfer, sce->pipeh, kurb, buf, urb->actlen,
 +		    flags, sce->timeout, (usbd_callback) ugen_read_async_callback);
 +		//usbd_setup_default_xfer(xfer, xfer->device, priv, USBD_DEFAULT_TIMEOUT, req, NULL, UGETW(req->wLength), USBD_NO_COPY, callback);
@@ -181,7 +184,7 @@
  	default:
  		break;
  	}
-@@ -1143,11 +1286,14 @@
+@@ -1143,11 +1289,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -198,7 +201,7 @@
  		int error = 0;
  
  		if (!(flag & FWRITE))
-@@ -1160,9 +1306,18 @@
+@@ -1160,9 +1309,18 @@
  		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
  		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
  			return (EINVAL);
@@ -218,7 +221,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1330,87 @@
+@@ -1175,34 +1333,87 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -327,7 +330,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1456,55 @@
+@@ -1248,44 +1459,54 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC
@@ -386,13 +389,12 @@
 +			}
 +			break;
 +		case UE_BULK:
-+			/*
-+			 * We have no easy way of determining if a read will
-+			 * yield any data or a write will happen.
-+			 * Pretend they will.
-+			 */
-+			revents |= events &
-+				   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
++			if (events & (POLLIN | POLLRDNORM)) {
++				if (!TAILQ_EMPTY(&urb_entry_head))
++					revents |= events & (POLLIN | POLLRDNORM);
++				else
++					selrecord(p, &sce->rsel);
++			}
 +			break;
 +		default:
 +			break;

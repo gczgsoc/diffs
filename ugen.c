@@ -155,6 +155,7 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
 
 void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ctl_urb *urb = priv;
+	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
 	/* more transfers left? otherwise, insert kurb onto
 	 * completeded queue */
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
@@ -165,6 +166,7 @@ void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	urb->xfer = xfer;
 
 	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+	selwakeup(&sce->rsel);
 }
 
 int
@@ -1059,6 +1061,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		sce = &sc->sc_endpoints[endpt][IN];
 		if (sce->state & UGEN_SHORT_OK)
 			flags = USBD_SHORT_XFER_OK;
+		kurb->sce = sce;
 		usbd_setup_xfer(xfer, sce->pipeh, kurb, buf, urb->actlen,
 		    flags, sce->timeout, (usbd_callback) ugen_read_async_callback);
 		//usbd_setup_default_xfer(xfer, xfer->device, priv, USBD_DEFAULT_TIMEOUT, req, NULL, UGETW(req->wLength), USBD_NO_COPY, callback);
@@ -1494,13 +1497,12 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 			}
 			break;
 		case UE_BULK:
-			/*
-			 * We have no easy way of determining if a read will
-			 * yield any data or a write will happen.
-			 * Pretend they will.
-			 */
-			revents |= events &
-				   (POLLIN | POLLRDNORM | POLLOUT | POLLWRNORM);
+			if (events & (POLLIN | POLLRDNORM)) {
+				if (!TAILQ_EMPTY(&urb_entry_head))
+					revents |= events & (POLLIN | POLLRDNORM);
+				else
+					selrecord(p, &sce->rsel);
+			}
 			break;
 		default:
 			break;
