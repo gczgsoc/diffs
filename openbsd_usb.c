@@ -86,6 +86,7 @@ static int obsd_clock_gettime(int, struct timespec *);
 static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
 static int _sync_control_transfer(struct usbi_transfer *);
+static int _sync_bulk_transfer(struct usbi_transfer *itransfer);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
 
@@ -868,6 +869,9 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 	struct ctl_urb put_urb;
 	struct ctl_urb get_urb;
 	int fd, nr = 1;
+	int bulk_buffer_len = 1024;
+	int num_urbs = 0;
+	int last_urb_partial = 0;
 
 	usbi_dbg("");
 
@@ -892,21 +896,41 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
 				return _errno_to_libusb(errno);
 
-		put_urb.buffer = transfer->buffer;
-		put_urb.length = transfer->length;
-		put_urb.user_context = itransfer;
-		usbi_dbg("submitting transfer");
-		if (nr = ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
-			return _errno_to_libusb(errno);
-		usbi_dbg("transfer submitted");
-		while (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) { }
-		if (put_urb.user_context == get_urb.user_context) {
-			usbi_dbg("transfer received");
-		} else {
-			usbi_dbg("wrong transfer received");
-			return (-1);
+		usbi_dbg("transfer length %d", transfer->length);
+		num_urbs = transfer->length / bulk_buffer_len;
+		if (transfer->length == 0) {
+			num_urbs = 1;
+		} else if ((transfer->length % bulk_buffer_len) > 0) {
+			printf("partial %d", transfer->length % bulk_buffer_len);
+			last_urb_partial = 1;
+			num_urbs++;
 		}
-		itransfer->transferred = get_urb->length;
+		usbi_dbg("num_urbs %d", num_urbs);
+
+		for (int i = 0; i < num_urbs; i++) {
+			usbi_dbg("urb %d", i);
+			put_urb.buffer = transfer->buffer + (i * bulk_buffer_len);
+			if (i == num_urbs - 1 && last_urb_partial) {
+				put_urb.actlen = transfer->length % bulk_buffer_len;
+			} else if (transfer->length == 0) {
+				put_urb.actlen = 0;
+			} else {
+				put_urb.actlen = bulk_buffer_len;
+			}
+			put_urb.user_context = itransfer;
+			if (nr = ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
+				return _errno_to_libusb(errno);
+			while (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) { }
+			if (put_urb.user_context == get_urb.user_context) {
+				usbi_dbg("transferred %d", get_urb.actlen);
+				itransfer->transferred += get_urb.actlen;
+			} else {
+				usbi_dbg("wrong transfer received");
+				return (-1);
+			}
+		}
+		usbi_dbg("successful_transfer");
+		usbi_dbg("transferred %d", itransfer->transferred);
 	} else {
 		nr = write(fd, transfer->buffer, transfer->length);
 		if (nr < 0)

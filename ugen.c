@@ -157,9 +157,7 @@ void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	struct ctl_urb *urb = priv;
 	/* more transfers left? otherwise, insert kurb onto
 	 * completeded queue */
-	printf("read callback called\n");
         if (s == USBD_NORMAL_COMPLETION || s == USBD_SHORT_XFER) {
-		printf("normal completion\n");
 		urb->actlen = xfer->actlen;
 		urb->dmabuf = KERNADDR(&xfer->dmabuf, 0);
         }
@@ -1028,13 +1026,19 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		sce->timeout = *(int *)addr;
 		return (0);
 	case USB_ASYNC_SUBMIT:
+	{
 		struct ctl_urb *urb = (void *)addr;
+		struct usbd_xfer *xfer;
+		struct ctl_urb *kurb;
+		void *buf;
 		int flags = 0;
-		int left = 0;
+		int error = 0;
+		//int left = urb->actlen;
 
-		if (urb->length > UGEN_BBSIZE)
-			return EIO;
-		printf("length ok\n");
+		if (urb->actlen > UGEN_BBSIZE) {
+			printf("length too big");
+			return (-1);
+		}
 
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 		if (xfer == 0)
@@ -1045,7 +1049,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 			return (ENOMEM);
 		}
 		*kurb = *urb;
-		buf = usbd_alloc_buffer(xfer, kurb->length);
+		buf = usbd_alloc_buffer(xfer, kurb->actlen);
 		if (buf == NULL) {
 			usbd_free_xfer(xfer);
 			free(kurb, M_TEMP, sizeof(*kurb));
@@ -1055,49 +1059,51 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		sce = &sc->sc_endpoints[endpt][IN];
 		if (sce->state & UGEN_SHORT_OK)
 			flags = USBD_SHORT_XFER_OK;
-		usbd_setup_xfer(xfer, sce->pipeh, kurb, buf, urb->length,
+		usbd_setup_xfer(xfer, sce->pipeh, kurb, buf, urb->actlen,
 		    flags, sce->timeout, (usbd_callback) ugen_read_async_callback);
+		//usbd_setup_default_xfer(xfer, xfer->device, priv, USBD_DEFAULT_TIMEOUT, req, NULL, UGETW(req->wLength), USBD_NO_COPY, callback);
 		err = usbd_transfer(xfer);
-		printf("transfer submitted\n");
-		if (err) {
+		if (err != USBD_IN_PROGRESS) {
 			printf("transfer error\n");
 			usbd_clear_endpoint_stall(sce->pipeh);
-			if (err == USBD_INTERRUPTED)
+			if (err == USBD_INTERRUPTED) {
+				printf("interrupted\n");
 				error = EINTR;
-			else if (err == USBD_TIMEOUT)
+			} else if (err == USBD_TIMEOUT) {
+				printf("timeout\n");
 				error = ETIMEDOUT;
-			else
+			} else {
+				printf("other error\n");
 				error = EIO;
+			}
 			usbd_free_xfer(xfer);
 			free(kurb, M_TEMP, sizeof(*kurb));
 			return (error);
 		}
-		printf("submit success\n");
+
 		return (0);
+	}
 	case USB_ASYNC_COMPLETE:
+	{
 		struct ctl_urb *urb = (void *)addr;
 		struct ctl_urb *kurb;
-		int flags = 0;
+		//int flags = 0;
 		struct uio uio;
 		struct iovec iov;
 		int s;
 		int error = 0;
 
-		printf("GETTING COMPLETED\n");
 		s = splusb();
 		kurb = TAILQ_FIRST(&urb_entry_head);
 		if (kurb == NULL) {
-			printf("nothing\n");
 			splx(s);
 			return (EIO);
 		}
 		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
 		splx(s);
 
-		printf("got one\n");
 		if (kurb->status == USBD_NORMAL_COMPLETION ||
 		    kurb->status == USBD_SHORT_XFER) {
-			printf("it was successful\n");
 			/* construct uio from ctl_urb */
 			if (kurb->actlen != 0) {
 				iov.iov_base = (caddr_t)kurb->buffer;
@@ -1109,7 +1115,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 				uio.uio_segflg = UIO_USERSPACE;
 				uio.uio_rw = UIO_READ;
 				uio.uio_procp = p;
-				printf("do move\n");
 				error = uiomovei(kurb->dmabuf, kurb->actlen, &uio);
 				if (error) {
 					printf("move error\n");
@@ -1123,6 +1128,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		usbd_free_xfer(kurb->xfer);
 		free(kurb, M_TEMP, sizeof(*kurb));
 		return (0);
+	}
 	default:
 		break;
 	}
