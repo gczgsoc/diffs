@@ -86,6 +86,7 @@ static int obsd_clock_gettime(int, struct timespec *);
 static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
 static int _sync_control_transfer(struct usbi_transfer *);
+static int _sync_bulk_transfer(struct usbi_transfer *itransfer);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
 
@@ -262,7 +263,6 @@ obsd_open(struct libusb_device_handle *handle)
 			return _errno_to_libusb(errno);
 
 		usbi_add_pollfd(HANDLE_CTX(handle), dpriv->fd, POLLIN | POLLRDNORM);
-
 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
 	}
 
@@ -274,8 +274,6 @@ obsd_close(struct libusb_device_handle *handle)
 {
 	struct handle_priv *hpriv = (struct handle_priv *)handle->os_priv;
 	struct device_priv *dpriv = (struct device_priv *)handle->dev->os_priv;
-
-	usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 
 	if (dpriv->devname) {
 		usbi_dbg("close: fd %d", dpriv->fd);
@@ -499,6 +497,13 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 		err = _sync_gen_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_BULK:
+		if (IS_XFEROUT(transfer) &&
+		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
+			err = LIBUSB_ERROR_NOT_SUPPORTED;
+			break;
+		}
+		err = _sync_bulk_transfer(itransfer);
+		break;
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 		if (IS_XFEROUT(transfer) &&
 		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
@@ -573,6 +578,13 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 			if (dpriv->fd == pollfd->fd)
 				break;
 
+			//for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++) {
+			//	if (hpriv->endpoints[endpt] == pollfd->fd) {
+			//		fd = hpriv->endpoints[endpt];
+			//		break;
+			//	}
+			//}
+
 			hpriv = NULL;
 		}
 
@@ -589,6 +601,44 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 			continue;
 		}
 
+//		if (endpt != 0) {
+//			while (1) {
+//rep:
+//				if (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) {
+//					err = 0;
+//					break;
+//				}
+//				itransfer = get_urb.user_context;
+//
+//				switch(get_urb.status) {
+//				case USBD_NORMAL_COMPLETION:
+//				case USBD_SHORT_XFER:
+//					usbi_mutex_lock(&itransfer->lock);
+//					itransfer->transferred += get_urb.actlen;
+//					usbi_dbg("transferred %d", itransfer->transferred);
+//					usbi_mutex_unlock(&itransfer->lock);
+//
+//					error_code = LIBUSB_TRANSFER_COMPLETED;
+//					break;
+//				case USBD_IN_PROGRESS:
+//					goto rep;
+//				/* errors */
+//				case USBD_CANCELLED:
+//					error_code = LIBUSB_TRANSFER_CANCELLED;
+//					break;
+//				case USBD_STALLED:
+//					error_code = LIBUSB_TRANSFER_STALL;
+//					break;
+//				default:
+//					error_code = LIBUSB_TRANSFER_ERROR;
+//					break;
+//				}
+//				if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
+//					usbi_dbg("error completing");
+//					break;
+//				}
+//			}
+//		} else {
 		while (1) {
 repeat:
 			if (err = ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
@@ -596,8 +646,6 @@ repeat:
 				break;
 			}
 			itransfer = get_urb.user_context;
-
-			usbi_dbg("geturb status %d", get_urb.status);
 
 			switch(get_urb.status) {
 			case USBD_NORMAL_COMPLETION:
@@ -618,22 +666,6 @@ repeat:
 			case USBD_STALLED:
 				error_code = LIBUSB_TRANSFER_STALL;
 				break;
-			case USBD_PENDING_REQUESTS:
-			case USBD_NOT_STARTED:
-			case USBD_INVAL:
-			case USBD_NOMEM:
-			case USBD_BAD_ADDRESS:
-			case USBD_IN_USE:
-			case USBD_NO_ADDR:
-			case USBD_SET_ADDR_FAILED:
-			case USBD_NO_POWER:
-			case USBD_TOO_DEEP:
-			case USBD_IOERROR:
-			case USBD_NOT_CONFIGURED:
-			case USBD_TIMEOUT:
-			case USBD_INTERRUPTED:
-
-			case USBD_ERROR_MAX:
 			default:
 				error_code = LIBUSB_TRANSFER_ERROR;
 				break;
@@ -803,10 +835,12 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		put_urb.user_context = itransfer;
 
 		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
+			usbi_dbg("fail set timeout");
 			return _errno_to_libusb(errno);
 		}
 
 		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &put_urb)) < 0) {
+			usbi_dbg("fail do request");
 			return _errno_to_libusb(errno);
 		}
 
@@ -825,10 +859,12 @@ _access_endpoint(struct libusb_transfer *transfer)
 {
 	struct handle_priv *hpriv;
 	struct device_priv *dpriv;
+	struct libusb_device_handle *handle;
 	char devnode[16];
 	int fd, endpt;
 	mode_t mode;
 
+	handle = (struct libusb_device_handle *)transfer->dev_handle;
 	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
 
@@ -837,22 +873,95 @@ _access_endpoint(struct libusb_transfer *transfer)
 
 	usbi_dbg("endpoint %d mode %d", endpt, mode);
 
+	usbi_dbg("saved fd %d", hpriv->endpoints[endpt]);
+
 	if (hpriv->endpoints[endpt] < 0) {
 		/* Pick the right endpoint node */
 		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
 		    dpriv->devname, endpt);
 
+		usbi_dbg("devnode %s", devnode);
+
 		/* We may need to read/write to the same endpoint later. */
-		if (((fd = open(devnode, O_RDWR)) < 0) && (errno == ENXIO))
+		if (((fd = open(devnode, O_RDWR)) < 0) && (errno == ENXIO)) {
 			if ((fd = open(devnode, mode)) < 0)
 				return (-1);
+		} else if (fd < 0) {
+			return (-1);
+		}
 
+		usbi_dbg("saving endpoint fd");
 		hpriv->endpoints[endpt] = fd;
+		//usbi_add_pollfd(HANDLE_CTX(handle), fd, POLLIN | POLLRDNORM);
 	}
 
 	return (hpriv->endpoints[endpt]);
 }
 
+int
+_sync_bulk_transfer(struct usbi_transfer *itransfer)
+{
+	struct libusb_transfer *transfer;
+	struct device_priv *dpriv;
+	struct ctl_urb put_urb;
+	struct ctl_urb get_urb;
+	int fd, nr = 1;
+	struct pollfd pfd;
+
+	usbi_dbg("");
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	/*
+	 * Bulk, Interrupt or Isochronous transfer depends on the
+	 * endpoint and thus the node to open.
+	 */
+	if ((fd = _access_endpoint(transfer)) < 0)
+		return _errno_to_libusb(errno);
+
+	if ((ioctl(fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
+		return _errno_to_libusb(errno);
+
+	if (IS_XFERIN(transfer)) {
+		if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
+				return _errno_to_libusb(errno);
+
+		pfd.fd = fd;
+		pfd.events = POLLIN | POLLRDNORM;
+
+		put_urb.buffer = transfer->buffer;
+		put_urb.actlen = transfer->length;
+		put_urb.user_context = itransfer;
+		if (nr = ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
+			return _errno_to_libusb(errno);
+		if ((poll(&pfd, 1, INFTIM)) < 0)
+			return _errno_to_libusb(errno);
+		if (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb))
+			return _errno_to_libusb(errno);
+		if (put_urb.user_context == get_urb.user_context) {
+			itransfer->transferred += get_urb.actlen;
+		} else {
+			usbi_dbg("wrong transfer received");
+			return (-1);
+		}
+		usbi_dbg("successful_transfer");
+		usbi_dbg("transferred %d", itransfer->transferred);
+	} else {
+		nr = write(fd, transfer->buffer, transfer->length);
+		if (nr < 0)
+			return _errno_to_libusb(errno);
+
+		itransfer->transferred = nr;
+	}
+
+
+	return (0);
+}
 int
 _sync_gen_transfer(struct usbi_transfer *itransfer)
 {

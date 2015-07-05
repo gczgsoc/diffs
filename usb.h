@@ -614,15 +614,24 @@ struct usb_ctl_request {
 	int	ucr_actlen;		/* actual length transferred */
 };
 
+struct xfer_w {
+	struct ctl_urb *parent;
+	void *xfer;
+	TAILQ_ENTRY(xfer_w) entries;
+};
+
 struct ctl_urb {
 	struct usb_ctl_request req;
-	void *xfer;
+	void *buffer;
 	int actlen;
 	void *sce;
-	void *dmabuf;
-	int status;
-	TAILQ_ENTRY(ctl_urb) entries;
 	void *user_context;
+	int timeout;
+	int status;
+	void *xfer;
+	int count;
+	TAILQ_HEAD(, xfer_w) xfers_head;
+	TAILQ_ENTRY(ctl_urb) entries;
 };
 
 struct usb_alt_interface {
@@ -765,7 +774,9 @@ struct usb_device_stats {
 #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
-#define USB_GET_COMPLETED       _IOWR('U', 115, struct ctl_urb)
+#define USB_GET_COMPLETED	_IOWR('U', 115, struct ctl_urb)
+#define USB_ASYNC_SUBMIT	_IOWR('U', 116, struct ctl_urb)
+#define USB_ASYNC_COMPLETE	_IOWR('U', 117, struct ctl_urb)
 
 /* Modem device */
 #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)
