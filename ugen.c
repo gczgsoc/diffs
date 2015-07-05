@@ -137,6 +137,7 @@ const struct cfattach ugen_ca = {
 };
 
 TAILQ_HEAD(, ctl_urb) urb_entry_head;
+TAILQ_HEAD(, ctl_urb) endpt_head;
 
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ctl_urb *urb = priv;
@@ -160,7 +161,7 @@ void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 
 	if (urb->count == 0) {
 		urb->status = (int)s;
-		TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+		TAILQ_INSERT_TAIL(&endpt_head, urb, entries);
 		selwakeup(&sce->rsel);
 	}
 }
@@ -186,6 +187,7 @@ ugen_attach(struct device *parent, struct device *self, void *aux)
 	int conf;
 
 	TAILQ_INIT(&urb_entry_head);
+	TAILQ_INIT(&endpt_head);
 
 	sc->sc_udev = udev = uaa->device;
 
@@ -1109,12 +1111,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd,
 		int error = 0;
 
 		s = splusb();
-		kurb = TAILQ_FIRST(&urb_entry_head);
+		kurb = TAILQ_FIRST(&endpt_head);
 		if (kurb == NULL) {
 			splx(s);
 			return (EIO);
 		}
-		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
+		TAILQ_REMOVE(&endpt_head, kurb, entries);
 		splx(s);
 
 		if (kurb->status == USBD_NORMAL_COMPLETION ||
@@ -1527,7 +1529,7 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 			break;
 		case UE_BULK:
 			if (events & (POLLIN | POLLRDNORM)) {
-				if (!TAILQ_EMPTY(&urb_entry_head))
+				if (!TAILQ_EMPTY(&endpt_head))
 					revents |= events & (POLLIN | POLLRDNORM);
 				else
 					selrecord(p, &sce->rsel);
