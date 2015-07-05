@@ -614,18 +614,24 @@ struct usb_ctl_request {
 	int	ucr_actlen;		/* actual length transferred */
 };
 
+struct xfer_w {
+	struct ctl_urb *parent;
+	void *xfer;
+	TAILQ_ENTRY(xfer_w) entries;
+};
+
 struct ctl_urb {
 	struct usb_ctl_request req;
-	void *xfer;
+	void *buffer;
 	int actlen;
 	void *sce;
-	int continuation;
-	int error;
-	void *buffer;
-	void *dmabuf;
-	int status;
-	TAILQ_ENTRY(ctl_urb) entries;
 	void *user_context;
+	int timeout;
+	int status;
+	void *xfer;
+	int count;
+	TAILQ_HEAD(, xfer_w) xfers_head;
+	TAILQ_ENTRY(ctl_urb) entries;
 };
 
 struct usb_alt_interface {
