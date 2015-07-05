@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Sun Jul  5 04:35:22 2015
++++ ugen.c	Sun Jul  5 22:10:06 2015
 @@ -46,9 +46,13 @@
  #include <sys/vnode.h>
  #include <sys/poll.h>
@@ -23,11 +23,12 @@
  void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
  int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
-@@ -130,6 +136,35 @@
+@@ -130,6 +136,36 @@
  	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
  };
  
 +TAILQ_HEAD(, ctl_urb) urb_entry_head;
++TAILQ_HEAD(, ctl_urb) endpt_head;
 +
 +void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 +	struct ctl_urb *urb = priv;
@@ -51,7 +52,7 @@
 +
 +	if (urb->count == 0) {
 +		urb->status = (int)s;
-+		TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
++		TAILQ_INSERT_TAIL(&endpt_head, urb, entries);
 +		selwakeup(&sce->rsel);
 +	}
 +}
@@ -59,16 +60,17 @@
  int
  ugen_match(struct device *parent, void *match, void *aux)
  {
-@@ -150,6 +185,8 @@
+@@ -150,6 +186,9 @@
  	usbd_status err;
  	int conf;
  
 +	TAILQ_INIT(&urb_entry_head);
++	TAILQ_INIT(&endpt_head);
 +
  	sc->sc_udev = udev = uaa->device;
  
  	if (usbd_get_devcnt(udev) > 0)
-@@ -986,6 +1023,141 @@
+@@ -986,6 +1025,141 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -158,12 +160,12 @@
 +		int error = 0;
 +
 +		s = splusb();
-+		kurb = TAILQ_FIRST(&urb_entry_head);
++		kurb = TAILQ_FIRST(&endpt_head);
 +		if (kurb == NULL) {
 +			splx(s);
 +			return (EIO);
 +		}
-+		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
++		TAILQ_REMOVE(&endpt_head, kurb, entries);
 +		splx(s);
 +
 +		if (kurb->status == USBD_NORMAL_COMPLETION ||
@@ -210,7 +212,7 @@
  	default:
  		break;
  	}
-@@ -1143,11 +1315,14 @@
+@@ -1143,11 +1317,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -227,7 +229,7 @@
  		int error = 0;
  
  		if (!(flag & FWRITE))
-@@ -1160,9 +1335,18 @@
+@@ -1160,9 +1337,18 @@
  		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
  		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
  			return (EINVAL);
@@ -247,7 +249,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1359,90 @@
+@@ -1175,34 +1361,90 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -359,7 +361,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1488,54 @@
+@@ -1248,44 +1490,54 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC
@@ -419,7 +421,7 @@
 +			break;
 +		case UE_BULK:
 +			if (events & (POLLIN | POLLRDNORM)) {
-+				if (!TAILQ_EMPTY(&urb_entry_head))
++				if (!TAILQ_EMPTY(&endpt_head))
 +					revents |= events & (POLLIN | POLLRDNORM);
 +				else
 +					selrecord(p, &sce->rsel);
