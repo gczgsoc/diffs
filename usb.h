@@ -1,4 +1,4 @@
-/*	$OpenBSD: usb.h,v 1.50 2015/02/14 06:18:58 uebayasi Exp $ */
+/*	$OpenBSD: usb.h,v 1.52 2015/06/29 10:52:40 mpi Exp $ */
 /*	$NetBSD: usb.h,v 1.69 2002/09/22 23:20:50 augustss Exp $	*/
 /*	$FreeBSD: src/sys/dev/usb/usb.h,v 1.14 1999/11/17 22:33:46 n_hibma Exp $	*/
 
@@ -223,6 +223,18 @@ typedef struct {
 } __packed usb_interface_descriptor_t;
 #define USB_INTERFACE_DESCRIPTOR_SIZE 9
 
+struct usb_interface_assoc_descriptor {
+    uByte       bLength;
+    uByte       bDescriptorType;
+    uByte       bFirstInterface;
+    uByte       bInterfaceCount;
+    uByte       bFunctionClass;
+    uByte       bFunctionSubClass;
+    uByte       bFunctionProtocol;
+    uByte       iFunction;
+} __packed;
+typedef struct usb_interface_assoc_descriptor usb_interface_assoc_descriptor_t;
+
 typedef struct {
 	uByte		bLength;
 	uByte		bDescriptorType;
@@ -425,13 +437,14 @@ typedef struct {
 #define UPS_PORT_LS_HOT_RESET		0x0120
 #define UPS_PORT_LS_COMP_MOD		0x0140
 #define UPS_PORT_LS_LOOPBACK		0x0160
+#define UPS_PORT_LS_GET(x)		(((x) >> 5) & 0xf)
+#define UPS_PORT_LS_SET(x)		(((x) & 0xf) << 5)
 
 #define UPS_PORT_POWER			0x0100
 #define UPS_PORT_POWER_SS		0x0200	/* USB 3.0 only */
 #define UPS_FULL_SPEED			0x0000
 #define UPS_LOW_SPEED			0x0200
 #define UPS_HIGH_SPEED			0x0400
-#define UPS_SUPER_SPEED			0x0800
 #define UPS_PORT_TEST			0x0800
 #define UPS_PORT_INDICATOR		0x1000
 
