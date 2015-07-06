@@ -667,16 +667,20 @@ rep:
 					error_code = LIBUSB_TRANSFER_COMPLETED;
 					break;
 				case USBD_IN_PROGRESS:
+					usbi_dbg("e: in progress");
 					goto rep;
 				/* errors */
 				case USBD_CANCELLED:
 					error_code = LIBUSB_TRANSFER_CANCELLED;
+					usbi_dbg("e: cancelled");
 					break;
 				case USBD_STALLED:
 					error_code = LIBUSB_TRANSFER_STALL;
+					usbi_dbg("e: stall");
 					break;
 				default:
 					error_code = LIBUSB_TRANSFER_ERROR;
+					usbi_dbg("e: some error");
 					break;
 				}
 				if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
