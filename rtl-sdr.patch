@@ -1,0 +1,173 @@
+Index: patches/patch-src_rtl_fm_c
+===================================================================
+RCS file: /cvs/ports/comms/rtl-sdr/patches/patch-src_rtl_fm_c,v
+retrieving revision 1.1
+diff -u -p -r1.1 patch-src_rtl_fm_c
+--- patches/patch-src_rtl_fm_c	23 Apr 2013 14:50:19 -0000	1.1
++++ patches/patch-src_rtl_fm_c	6 Jul 2015 19:55:46 -0000
+@@ -1,6 +1,17 @@
+ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/04/23 14:50:19 sthen Exp $
+---- src/rtl_fm.c.orig	Fri Apr 12 21:51:14 2013
+-+++ src/rtl_fm.c	Tue Apr 23 15:42:34 2013
++--- src/rtl_fm.c.orig	Fri Apr 12 20:51:14 2013
+++++ src/rtl_fm.c	Mon Jul  6 19:35:49 2015
++@@ -67,8 +67,8 @@
++ #define AUTO_GAIN			-100
++ 
++ static pthread_t demod_thread;
++-static pthread_mutex_t data_ready;  /* locked when no fresh data available */
++-static pthread_mutex_t data_write;  /* locked when r/w buffer */
+++static pthread_mutex_t data;  /* locked when r/w buffer */
+++static pthread_cond_t data_available;
++ static int do_exit = 0;
++ static rtlsdr_dev_t *dev = NULL;
++ static int lcm_post[17] = {1,1,1,3,1,5,3,7,1,9,5,11,3,13,7,15,1};
+ @@ -128,6 +128,7 @@ void usage(void)
+  		"\t[-E sets lower edge tuning (default: center)]\n"
+  		"\t[-N enables NBFM mode (default: on)]\n"
+@@ -9,15 +20,50 @@ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/
+  		"\t (-N -s 170k -o 4 -A fast -r 32k -l 0 -D)\n"
+  		"\tfilename (a '-' dumps samples to stdout)\n"
+  		"\t (omitting the filename also uses stdout)\n\n"
+-@@ -723,12 +724,22 @@ int main(int argc, char **argv)
++@@ -580,7 +581,6 @@ void full_demod(struct fm_state *fm)
++ 	} else {
++ 		low_pass(fm, fm->buf, fm->buf_len);
++ 	}
++-	pthread_mutex_unlock(&data_write);
++ 	fm->mode_demod(fm);
++         if (fm->mode_demod == &raw_demod) {
++ 		fwrite(fm->signal2, 2, fm->signal2_len, fm->file);
++@@ -625,10 +625,11 @@ static void rtlsdr_callback(unsigned char *buf, uint32
++ 		return;}
++ 	if (!ctx) {
++ 		return;}
++-	pthread_mutex_lock(&data_write);
+++	pthread_mutex_lock(&data);
++ 	memcpy(fm2->buf, buf, len);
++ 	fm2->buf_len = len;
++-	pthread_mutex_unlock(&data_ready);
+++	pthread_cond_signal(&data_available);
+++	pthread_mutex_unlock(&data);
++ 	/* single threaded uses 25% less CPU? */
++ 	/* full_demod(fm2); */
++ }
++@@ -636,13 +637,15 @@ static void rtlsdr_callback(unsigned char *buf, uint32
++ static void *demod_thread_fn(void *arg)
++ {
++ 	struct fm_state *fm2 = arg;
+++	pthread_mutex_lock(&data);
++ 	while (!do_exit) {
++-		pthread_mutex_lock(&data_ready);
+++		pthread_cond_wait(&data_available, &data);
++ 		full_demod(fm2);
++ 		if (fm2->exit_flag) {
++ 			do_exit = 1;
++ 			rtlsdr_cancel_async(dev);}
++ 	}
+++	pthread_mutex_unlock(&data);
++ 	return 0;
++ }
++ 
++@@ -723,12 +726,17 @@ int main(int argc, char **argv)
+  	uint32_t dev_index = 0;
+  	int device_count;
+  	int ppm_error = 0;
+-+#ifdef __OpenBSD__
+-+	int sync_mode = 1;
+-+#else
+ +	int sync_mode = 0;
+-+#endif
+  	char vendor[256], product[256], serial[256];
+ +	pthread_mutexattr_t attr;
+ +
+@@ -26,8 +72,7 @@ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/
+ -	pthread_mutex_init(&data_write, NULL);
+ +	pthread_mutexattr_init(&attr);
+ +	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
+-+	pthread_mutex_init(&data_ready, &attr);
+-+	pthread_mutex_init(&data_write, &attr);
+++	pthread_mutex_init(&data, &attr);
+ +	pthread_mutexattr_destroy(&attr);
+  
+ -	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:EFA:NWMULRDC")) != -1) {
+@@ -35,7 +80,7 @@ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/
+  		switch (opt) {
+  		case 'd':
+  			dev_index = atoi(optarg);
+-@@ -815,6 +826,9 @@ int main(int argc, char **argv)
++@@ -815,6 +823,9 @@ int main(int argc, char **argv)
+  		case 'R':
+  			fm.mode_demod = &raw_demod;
+  			break;
+@@ -45,7 +90,7 @@ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/
+  		default:
+  			usage();
+  			break;
+-@@ -921,9 +935,24 @@ int main(int argc, char **argv)
++@@ -921,17 +932,32 @@ int main(int argc, char **argv)
+  		fprintf(stderr, "WARNING: Failed to reset buffers.\n");}
+  
+  	pthread_create(&demod_thread, NULL, demod_thread_fn, (void *)(&fm));
+@@ -73,3 +118,13 @@ $OpenBSD: patch-src_rtl_fm_c,v 1.1 2013/
+  
+  	if (do_exit) {
+  		fprintf(stderr, "\nUser cancel, exiting...\n");}
++ 	else {
++ 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
++ 	rtlsdr_cancel_async(dev);
++-	pthread_mutex_destroy(&data_ready);
++-	pthread_mutex_destroy(&data_write);
+++	pthread_mutex_destroy(&data);
+++	pthread_cond_destroy(&data_available);
++ 
++ 	if (fm.file != stdout) {
++ 		fclose(fm.file);}
+Index: patches/patch-src_rtl_sdr_c
+===================================================================
+RCS file: /cvs/ports/comms/rtl-sdr/patches/patch-src_rtl_sdr_c,v
+retrieving revision 1.1.1.1
+diff -u -p -r1.1.1.1 patch-src_rtl_sdr_c
+--- patches/patch-src_rtl_sdr_c	21 Apr 2013 11:45:08 -0000	1.1.1.1
++++ patches/patch-src_rtl_sdr_c	6 Jul 2015 19:55:46 -0000
+@@ -1,16 +0,0 @@
+-$OpenBSD: patch-src_rtl_sdr_c,v 1.1.1.1 2013/04/21 11:45:08 sthen Exp $
+---- src/rtl_sdr.c.orig	Sun Apr 21 11:58:32 2013
+-+++ src/rtl_sdr.c	Sun Apr 21 11:59:23 2013
+-@@ -110,7 +110,12 @@ int main(int argc, char **argv)
+- 	int n_read;
+- 	int r, opt;
+- 	int i, gain = 0;
+-+#ifdef __OpenBSD__
+-+	/* XXX async doesn't work yet */
+-+	int sync_mode = 1;
+-+#else
+- 	int sync_mode = 0;
+-+#endif
+- 	FILE *file;
+- 	uint8_t *buffer;
+- 	uint32_t dev_index = 0;
+Index: patches/patch-src_rtl_test_c
+===================================================================
+RCS file: /cvs/ports/comms/rtl-sdr/patches/patch-src_rtl_test_c,v
+retrieving revision 1.1.1.1
+diff -u -p -r1.1.1.1 patch-src_rtl_test_c
+--- patches/patch-src_rtl_test_c	21 Apr 2013 11:45:08 -0000	1.1.1.1
++++ patches/patch-src_rtl_test_c	6 Jul 2015 19:55:46 -0000
+@@ -1,16 +0,0 @@
+-$OpenBSD: patch-src_rtl_test_c,v 1.1.1.1 2013/04/21 11:45:08 sthen Exp $
+---- src/rtl_test.c.orig	Sun Apr 21 11:58:32 2013
+-+++ src/rtl_test.c	Sun Apr 21 11:59:31 2013
+-@@ -210,7 +210,12 @@ int main(int argc, char **argv)
+- 	int n_read;
+- 	int r, opt;
+- 	int i, tuner_benchmark = 0;
+-+#ifdef __OpenBSD__
+-+	/* XXX async doesn't work yet */
+-+	int sync_mode = 1;
+-+#else
+- 	int sync_mode = 0;
+-+#endif
+- 	uint8_t *buffer;
+- 	uint32_t dev_index = 0;
+- 	uint32_t samp_rate = DEFAULT_SAMPLE_RATE;
