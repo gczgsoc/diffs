@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Tue Jul  7 04:47:45 2015
++++ openbsd_usb.c	Tue Jul  7 16:47:40 2015
 @@ -29,6 +29,7 @@
  #include <unistd.h>
  
@@ -71,7 +71,7 @@
  	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
  		if (IS_XFEROUT(transfer) &&
  		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
-@@ -506,7 +520,15 @@
+@@ -506,7 +520,14 @@
  	if (err)
  		return (err);
  
@@ -80,15 +80,14 @@
 +		if (dpriv->devname == NULL)
 +			usbi_signal_transfer_completion(itransfer);
 +	} else if (transfer->type == LIBUSB_TRANSFER_TYPE_BULK) {
-+		if (IS_XFEROUT(transfer))
-+			usbi_signal_transfer_completion(itransfer);
++		/* do nothing */
 +	} else {
 +		usbi_signal_transfer_completion(itransfer);
 +	}
  
  	return (LIBUSB_SUCCESS);
  }
-@@ -528,6 +550,159 @@
+@@ -528,6 +549,159 @@
  }
  
  int
@@ -248,7 +247,7 @@
  obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
  	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-@@ -628,6 +803,7 @@
+@@ -628,6 +802,7 @@
  	struct libusb_control_setup *setup;
  	struct device_priv *dpriv;
  	struct usb_ctl_request req;
@@ -256,7 +255,7 @@
  
  	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
-@@ -669,11 +845,20 @@
+@@ -669,11 +844,20 @@
  		}
  		close(fd);
  	} else {
@@ -279,7 +278,7 @@
  	}
  
  	itransfer->transferred = req.ucr_actlen;
-@@ -688,10 +873,12 @@
+@@ -688,10 +872,12 @@
  {
  	struct handle_priv *hpriv;
  	struct device_priv *dpriv;
@@ -292,7 +291,7 @@
  	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
  
-@@ -705,17 +892,71 @@
+@@ -705,17 +891,72 @@
  		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
  		    dpriv->devname, endpt);
  
@@ -352,11 +351,12 @@
 +		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
 +			return _errno_to_libusb(errno);
 +	} else {
-+		nr = write(fd, transfer->buffer, transfer->length);
-+		if (nr < 0)
++		put_urb.read = 0;
++		put_urb.buffer = transfer->buffer;
++		put_urb.actlen = transfer->length;
++		put_urb.user_context = itransfer;
++		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
 +			return _errno_to_libusb(errno);
-+
-+		itransfer->transferred = nr;
 +	}
 +
 +

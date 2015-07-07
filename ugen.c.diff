@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Tue Jul  7 04:50:17 2015
++++ ugen.c	Tue Jul  7 17:06:43 2015
 @@ -1,4 +1,4 @@
 -/*	$OpenBSD: ugen.c,v 1.81 2015/02/10 21:56:09 miod Exp $ */
 +/*	$OpenBSD: ugen.c,v 1.84 2015/06/15 15:45:28 mpi Exp $ */
@@ -219,7 +219,7 @@
  {
  	struct ugen_endpoint *sce;
  	int err;
-@@ -986,6 +1058,211 @@
+@@ -986,6 +1058,217 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -234,8 +234,8 @@
 +		int error = 0;
 +		int left = urb->actlen;
 +		int len;
-+		//struct uio;
-+		//struct iovec;
++		struct uio uio;
++		struct iovec iov;
 +
 +		// specify if read or write
 +
@@ -257,19 +257,16 @@
 +
 +		TAILQ_INIT(&kurb->xfers_head);
 +
-+		//if (write) {
-+		//	iov.iov_base = (caddr_t)urb->buffer;
-+		//	iov.iov_len = urb->actlen;
-+		//	uio.uio_iov = &iov;
-+		//	uio.uio_iovcnt = 1;
-+		//	uio.uio_resid = urb->actlen;
-+		//	uio.uio_offset = 0;
-+		//	uio.uio_segflg = UIO_USERSPACE;
-+		//	uio.uio_rw =
-+		//		ur->ucr_request.bmRequestType & UT_READ ?
-+		//		UIO_READ : UIO_WRITE;
-+		//	uio.uio_procp = p;
-+		//}
++		// if write
++		iov.iov_base = (caddr_t)urb->buffer;
++		iov.iov_len = urb->actlen;
++		uio.uio_iov = &iov;
++		uio.uio_iovcnt = 1;
++		uio.uio_resid = urb->actlen;
++		uio.uio_offset = 0;
++		uio.uio_segflg = UIO_USERSPACE;
++		uio.uio_rw = urb->read ? UIO_READ : UIO_WRITE;
++		uio.uio_procp = p;
 +
 +		while (left != 0) {
 +			xfer = usbd_alloc_xfer(sc->sc_udev);
@@ -281,6 +278,8 @@
 +				// if transfers have been
 +				// submitted, should cancel
 +				// them here
++
++				// how to free kurb?
 +				printf("no mem xfer\n");
 +				return (ENOMEM);
 +			}
@@ -298,14 +297,20 @@
 +				usbd_free_xfer(xfer);
 +				return (ENOMEM);
 +			}
-+			//if (uio.uio_rw == UIO_WRITE) {
-+			//	error = uiomove(buf, len, &uio);
-+			//	if (error) {
-+			//		usbd_free_xfer(xfer);
-+			//		free(kurb, M_TEMP, sizeof(*kurb));
-+			//		return (error);
-+			//	}
-+			//}
++			if (uio.uio_rw == UIO_WRITE) {
++				error = uiomove(buf, len, &uio);
++				if (error) {
++					// if no transfers have
++					// been submitted, need to
++					// free kurb here
++
++					// if transfers have been
++					// submitted, should cancel
++					// them here
++					usbd_free_xfer(xfer);
++					return (error);
++				}
++			}
 +			wrap = malloc(sizeof(*wrap), M_TEMP, M_WAITOK);
 +			if (wrap == NULL) {
 +				// if no transfers have
@@ -370,6 +375,7 @@
 +		}
 +		TAILQ_REMOVE(&sce->queue, kurb, entries);
 +
++		// if read
 +		iov.iov_base = (caddr_t)kurb->buffer;
 +		iov.iov_len = kurb->actlen;
 +		uio.uio_iov = &iov;
@@ -377,7 +383,7 @@
 +		uio.uio_resid = kurb->actlen;
 +		uio.uio_offset = 0;
 +		uio.uio_segflg = UIO_USERSPACE;
-+		uio.uio_rw = UIO_READ;
++		uio.uio_rw = kurb->read ? UIO_READ : UIO_WRITE;
 +		uio.uio_procp = p;
 +
 +		while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
@@ -385,7 +391,7 @@
 +			xfer = (struct usbd_xfer *)wrap->xfer;
 +			if (xfer->status == USBD_NORMAL_COMPLETION ||
 +			    xfer->status == USBD_SHORT_XFER) {
-+				if (kurb->read) {
++				if (uio.uio_rw == UIO_READ) {
 +					error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
 +					if (error) {
 +						printf("move error\n");
@@ -431,7 +437,7 @@
  	default:
  		break;
  	}
-@@ -1143,11 +1420,14 @@
+@@ -1143,11 +1426,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -448,7 +454,7 @@
  		int error = 0;
  
  		if (!(flag & FWRITE))
-@@ -1160,9 +1440,18 @@
+@@ -1160,9 +1446,18 @@
  		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
  		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
  			return (EINVAL);
@@ -468,7 +474,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1464,92 @@
+@@ -1175,34 +1470,92 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -582,7 +588,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1595,54 @@
+@@ -1248,44 +1601,54 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC

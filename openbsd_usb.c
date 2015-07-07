@@ -524,8 +524,7 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 		if (dpriv->devname == NULL)
 			usbi_signal_transfer_completion(itransfer);
 	} else if (transfer->type == LIBUSB_TRANSFER_TYPE_BULK) {
-		if (IS_XFEROUT(transfer))
-			usbi_signal_transfer_completion(itransfer);
+		/* do nothing */
 	} else {
 		usbi_signal_transfer_completion(itransfer);
 	}
@@ -947,11 +946,12 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
 			return _errno_to_libusb(errno);
 	} else {
-		nr = write(fd, transfer->buffer, transfer->length);
-		if (nr < 0)
+		put_urb.read = 0;
+		put_urb.buffer = transfer->buffer;
+		put_urb.actlen = transfer->length;
+		put_urb.user_context = itransfer;
+		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
 			return _errno_to_libusb(errno);
-
-		itransfer->transferred = nr;
 	}
 
 

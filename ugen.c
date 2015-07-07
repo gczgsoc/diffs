@@ -1069,8 +1069,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int error = 0;
 		int left = urb->actlen;
 		int len;
-		//struct uio;
-		//struct iovec;
+		struct uio uio;
+		struct iovec iov;
 
 		// specify if read or write
 
@@ -1092,19 +1092,16 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		TAILQ_INIT(&kurb->xfers_head);
 
-		//if (write) {
-		//	iov.iov_base = (caddr_t)urb->buffer;
-		//	iov.iov_len = urb->actlen;
-		//	uio.uio_iov = &iov;
-		//	uio.uio_iovcnt = 1;
-		//	uio.uio_resid = urb->actlen;
-		//	uio.uio_offset = 0;
-		//	uio.uio_segflg = UIO_USERSPACE;
-		//	uio.uio_rw =
-		//		ur->ucr_request.bmRequestType & UT_READ ?
-		//		UIO_READ : UIO_WRITE;
-		//	uio.uio_procp = p;
-		//}
+		// if write
+		iov.iov_base = (caddr_t)urb->buffer;
+		iov.iov_len = urb->actlen;
+		uio.uio_iov = &iov;
+		uio.uio_iovcnt = 1;
+		uio.uio_resid = urb->actlen;
+		uio.uio_offset = 0;
+		uio.uio_segflg = UIO_USERSPACE;
+		uio.uio_rw = urb->read ? UIO_READ : UIO_WRITE;
+		uio.uio_procp = p;
 
 		while (left != 0) {
 			xfer = usbd_alloc_xfer(sc->sc_udev);
@@ -1116,6 +1113,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				// if transfers have been
 				// submitted, should cancel
 				// them here
+
+				// how to free kurb?
 				printf("no mem xfer\n");
 				return (ENOMEM);
 			}
@@ -1133,14 +1132,20 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				usbd_free_xfer(xfer);
 				return (ENOMEM);
 			}
-			//if (uio.uio_rw == UIO_WRITE) {
-			//	error = uiomove(buf, len, &uio);
-			//	if (error) {
-			//		usbd_free_xfer(xfer);
-			//		free(kurb, M_TEMP, sizeof(*kurb));
-			//		return (error);
-			//	}
-			//}
+			if (uio.uio_rw == UIO_WRITE) {
+				error = uiomove(buf, len, &uio);
+				if (error) {
+					// if no transfers have
+					// been submitted, need to
+					// free kurb here
+
+					// if transfers have been
+					// submitted, should cancel
+					// them here
+					usbd_free_xfer(xfer);
+					return (error);
+				}
+			}
 			wrap = malloc(sizeof(*wrap), M_TEMP, M_WAITOK);
 			if (wrap == NULL) {
 				// if no transfers have
@@ -1205,6 +1210,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		}
 		TAILQ_REMOVE(&sce->queue, kurb, entries);
 
+		// if read
 		iov.iov_base = (caddr_t)kurb->buffer;
 		iov.iov_len = kurb->actlen;
 		uio.uio_iov = &iov;
@@ -1212,7 +1218,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		uio.uio_resid = kurb->actlen;
 		uio.uio_offset = 0;
 		uio.uio_segflg = UIO_USERSPACE;
-		uio.uio_rw = UIO_READ;
+		uio.uio_rw = kurb->read ? UIO_READ : UIO_WRITE;
 		uio.uio_procp = p;
 
 		while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
@@ -1220,7 +1226,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			xfer = (struct usbd_xfer *)wrap->xfer;
 			if (xfer->status == USBD_NORMAL_COMPLETION ||
 			    xfer->status == USBD_SHORT_XFER) {
-				if (kurb->read) {
+				if (uio.uio_rw == UIO_READ) {
 					error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
 					if (error) {
 						printf("move error\n");
