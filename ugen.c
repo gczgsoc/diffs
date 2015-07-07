@@ -93,6 +93,7 @@ struct ugen_endpoint {
 		void *dmabuf;
 		u_int16_t sizes[UGEN_NISORFRMS];
 	} isoreqs[UGEN_NISOREQS];
+	TAILQ_HEAD(, ctl_urb) queue;
 };
 
 struct ugen_softc {
@@ -137,9 +138,6 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-TAILQ_HEAD(, ctl_urb) urb_entry_head;
-TAILQ_HEAD(, ctl_urb) endpt_head;
-
 void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct ctl_urb *urb = priv;
 	struct ugen_endpoint *sce = (struct ugen_endpoint *)urb->sce;
@@ -147,7 +145,7 @@ void ugen_request_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status
 	urb->status = (int)s;
 	urb->xfer = xfer;
 
-	TAILQ_INSERT_TAIL(&urb_entry_head, urb, entries);
+	TAILQ_INSERT_TAIL(&sce->queue, urb, entries);
 	selwakeup(&sce->rsel);
 }
 
@@ -161,7 +159,7 @@ void ugen_read_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	TAILQ_INSERT_TAIL(&urb->xfers_head, wrap, entries);
 
 	if (urb->count == 0) {
-		TAILQ_INSERT_TAIL(&endpt_head, urb, entries);
+		TAILQ_INSERT_TAIL(&sce->queue, urb, entries);
 		selwakeup(&sce->rsel);
 	}
 }
@@ -303,9 +301,6 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 	void *buf;
 	int i, j;
 
-	TAILQ_INIT(&urb_entry_head);
-	TAILQ_INIT(&endpt_head);
-
 	if (unit >= ugen_cd.cd_ndevs)
 		return (ENXIO);
 	sc = ugen_cd.cd_devs[unit];
@@ -320,6 +315,9 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 
 	if (sc->sc_is_open[endpt])
 		return (EBUSY);
+
+	sce = &sc->sc_endpoints[endpt][IN];
+	TAILQ_INIT(&sce->queue);
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
 		sc->sc_is_open[USB_CONTROL_ENDPOINT] = 1;
@@ -441,25 +439,6 @@ ugenclose(dev_t dev, int flag, int mode, struct proc *p)
 	int endpt = UGENENDPOINT(dev);
 	int error;
 
-	struct ctl_urb *urb;
-	struct xfer_w *wrap;
-
-	while ((urb = TAILQ_FIRST(&urb_entry_head))) {
-		TAILQ_REMOVE(&urb_entry_head, urb, entries);
-		usbd_free_xfer(urb->xfer);
-		free(urb, M_TEMP, sizeof(*urb));
-	}
-
-	while ((urb = TAILQ_FIRST(&endpt_head))) {
-		TAILQ_REMOVE(&endpt_head, urb, entries);
-		while ((wrap = TAILQ_FIRST(&urb->xfers_head))) {
-			TAILQ_REMOVE(&urb->xfers_head, wrap, entries);
-			usbd_free_xfer(wrap->xfer);
-			free(wrap, M_TEMP, sizeof(*wrap));
-		}
-		free(urb, M_TEMP, sizeof(*urb));
-	}
-
 	if (sc == NULL || usbd_is_dying(sc->sc_udev))
 		return (EIO);
 
@@ -479,6 +458,9 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 {
 	struct ugen_endpoint *sce;
 	int dir, i;
+	struct ctl_urb *urb;
+	struct xfer_w *wrap;
+
 
 #ifdef DIAGNOSTIC
 	if (!sc->sc_is_open[endpt]) {
@@ -486,6 +468,24 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 		return (EINVAL);
 	}
 #endif
+	sce = &sc->sc_endpoints[endpt][IN];
+	if (endpt == USB_CONTROL_ENDPOINT) {
+		while ((urb = TAILQ_FIRST(&sce->queue))) {
+			TAILQ_REMOVE(&sce->queue, urb, entries);
+			usbd_free_xfer(urb->xfer);
+			free(urb, M_TEMP, sizeof(*urb));
+		}
+	} else {
+		while ((urb = TAILQ_FIRST(&sce->queue))) {
+			TAILQ_REMOVE(&sce->queue, urb, entries);
+			while ((wrap = TAILQ_FIRST(&urb->xfers_head))) {
+				TAILQ_REMOVE(&urb->xfers_head, wrap, entries);
+				usbd_free_xfer(wrap->xfer);
+				free(wrap, M_TEMP, sizeof(*wrap));
+			}
+			free(urb, M_TEMP, sizeof(*urb));
+		}
+	}
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
 		DPRINTFN(5, ("ugenclose: close control\n"));
@@ -1069,6 +1069,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int error = 0;
 		int left = urb->actlen;
 		int len;
+		//struct uio;
+		//struct iovec;
+
+		// specify if read or write
 
 		kurb = malloc(sizeof(*kurb), M_TEMP, M_WAITOK);
 		if (kurb == NULL) {
@@ -1087,6 +1091,20 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			kurb->count++;
 
 		TAILQ_INIT(&kurb->xfers_head);
+
+		//if (write) {
+		//	iov.iov_base = (caddr_t)urb->buffer;
+		//	iov.iov_len = urb->actlen;
+		//	uio.uio_iov = &iov;
+		//	uio.uio_iovcnt = 1;
+		//	uio.uio_resid = urb->actlen;
+		//	uio.uio_offset = 0;
+		//	uio.uio_segflg = UIO_USERSPACE;
+		//	uio.uio_rw =
+		//		ur->ucr_request.bmRequestType & UT_READ ?
+		//		UIO_READ : UIO_WRITE;
+		//	uio.uio_procp = p;
+		//}
 
 		while (left != 0) {
 			xfer = usbd_alloc_xfer(sc->sc_udev);
@@ -1115,6 +1133,14 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				usbd_free_xfer(xfer);
 				return (ENOMEM);
 			}
+			//if (uio.uio_rw == UIO_WRITE) {
+			//	error = uiomove(buf, len, &uio);
+			//	if (error) {
+			//		usbd_free_xfer(xfer);
+			//		free(kurb, M_TEMP, sizeof(*kurb));
+			//		return (error);
+			//	}
+			//}
 			wrap = malloc(sizeof(*wrap), M_TEMP, M_WAITOK);
 			if (wrap == NULL) {
 				// if no transfers have
@@ -1169,13 +1195,15 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int s;
 		int error = 0;
 
+		sce = &sc->sc_endpoints[endpt][IN];
+
 		s = splusb();
-		kurb = TAILQ_FIRST(&endpt_head);
+		kurb = TAILQ_FIRST(&sce->queue);
 		if (kurb == NULL) {
 			splx(s);
 			return (EIO);
 		}
-		TAILQ_REMOVE(&endpt_head, kurb, entries);
+		TAILQ_REMOVE(&sce->queue, kurb, entries);
 
 		iov.iov_base = (caddr_t)kurb->buffer;
 		iov.iov_len = kurb->actlen;
@@ -1476,13 +1504,15 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int s;
 		int error = 0;
 
+		sce = &sc->sc_endpoints[endpt][IN];
+
 		s = splusb();
-		kurb = TAILQ_FIRST(&urb_entry_head);
+		kurb = TAILQ_FIRST(&sce->queue);
 		if (kurb == NULL) {
 			splx(s);
 			return (EIO);
 		}
-		TAILQ_REMOVE(&urb_entry_head, kurb, entries);
+		TAILQ_REMOVE(&sce->queue, kurb, entries);
 		splx(s);
 		xfer = (struct usbd_xfer *)kurb->xfer;
 		if (kurb->status == USBD_NORMAL_COMPLETION ||
@@ -1577,7 +1607,7 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	s = splusb();
 	if (UGENENDPOINT(dev) == USB_CONTROL_ENDPOINT) {
 		if (events & (POLLIN | POLLRDNORM)) {
-			if (!TAILQ_EMPTY(&urb_entry_head))
+			if (!TAILQ_EMPTY(&sce->queue))
 				revents |= events & (POLLIN | POLLRDNORM);
 			else
 				selrecord(p, &sce->rsel);
@@ -1602,7 +1632,7 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 			break;
 		case UE_BULK:
 			if (events & (POLLIN | POLLRDNORM)) {
-				if (!TAILQ_EMPTY(&endpt_head))
+				if (!TAILQ_EMPTY(&sce->queue))
 					revents |= events & (POLLIN | POLLRDNORM);
 				else
 					selrecord(p, &sce->rsel);
