@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Mon Jul  6 19:49:46 2015
++++ openbsd_usb.c	Tue Jul  7 04:47:45 2015
 @@ -29,6 +29,7 @@
  #include <unistd.h>
  
@@ -292,7 +292,7 @@
  	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
  
-@@ -705,17 +892,70 @@
+@@ -705,17 +892,71 @@
  		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
  		    dpriv->devname, endpt);
  
@@ -345,6 +345,7 @@
 +			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
 +				return _errno_to_libusb(errno);
 +
++		put_urb.read = 1;
 +		put_urb.buffer = transfer->buffer;
 +		put_urb.actlen = transfer->length;
 +		put_urb.user_context = itransfer;

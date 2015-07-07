@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Tue Jul  7 04:06:02 2015
++++ ugen.c	Tue Jul  7 04:50:17 2015
 @@ -1,4 +1,4 @@
 -/*	$OpenBSD: ugen.c,v 1.81 2015/02/10 21:56:09 miod Exp $ */
 +/*	$OpenBSD: ugen.c,v 1.84 2015/06/15 15:45:28 mpi Exp $ */
@@ -219,7 +219,7 @@
  {
  	struct ugen_endpoint *sce;
  	int err;
-@@ -986,6 +1058,209 @@
+@@ -986,6 +1058,211 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -385,21 +385,23 @@
 +			xfer = (struct usbd_xfer *)wrap->xfer;
 +			if (xfer->status == USBD_NORMAL_COMPLETION ||
 +			    xfer->status == USBD_SHORT_XFER) {
-+				error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
-+				if (error) {
-+					printf("move error\n");
-+					kurb->status = USBD_IOERROR;
-+					*urb = *kurb;
-+					usbd_free_xfer(xfer);
-+					free(wrap, M_TEMP, sizeof(*wrap));
-+					while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
-+						TAILQ_REMOVE(&kurb->xfers_head, wrap, entries);
-+						usbd_free_xfer(wrap->xfer);
++				if (kurb->read) {
++					error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
++					if (error) {
++						printf("move error\n");
++						kurb->status = USBD_IOERROR;
++						*urb = *kurb;
++						usbd_free_xfer(xfer);
 +						free(wrap, M_TEMP, sizeof(*wrap));
++						while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
++							TAILQ_REMOVE(&kurb->xfers_head, wrap, entries);
++							usbd_free_xfer(wrap->xfer);
++							free(wrap, M_TEMP, sizeof(*wrap));
++						}
++						free(kurb, M_TEMP, sizeof(*kurb));
++						splx(s);
++						return (0);
 +					}
-+					free(kurb, M_TEMP, sizeof(*kurb));
-+					splx(s);
-+					return (0);
 +				}
 +			} else {
 +				printf("status not ok\n");
@@ -429,7 +431,7 @@
  	default:
  		break;
  	}
-@@ -1143,11 +1418,14 @@
+@@ -1143,11 +1420,14 @@
  	}
  	case USB_DO_REQUEST:
  	{
@@ -446,7 +448,7 @@
  		int error = 0;
  
  		if (!(flag & FWRITE))
-@@ -1160,9 +1438,18 @@
+@@ -1160,9 +1440,18 @@
  		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
  		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
  			return (EINVAL);
@@ -466,7 +468,7 @@
  		if (len != 0) {
  			iov.iov_base = (caddr_t)ur->ucr_data;
  			iov.iov_len = len;
-@@ -1175,34 +1462,92 @@
+@@ -1175,34 +1464,92 @@
  				ur->ucr_request.bmRequestType & UT_READ ?
  				UIO_READ : UIO_WRITE;
  			uio.uio_procp = p;
@@ -580,7 +582,7 @@
  	}
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
-@@ -1248,44 +1593,54 @@
+@@ -1248,44 +1595,54 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC

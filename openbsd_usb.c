@@ -940,6 +940,7 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
 				return _errno_to_libusb(errno);
 
+		put_urb.read = 1;
 		put_urb.buffer = transfer->buffer;
 		put_urb.actlen = transfer->length;
 		put_urb.user_context = itransfer;

@@ -1220,21 +1220,23 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			xfer = (struct usbd_xfer *)wrap->xfer;
 			if (xfer->status == USBD_NORMAL_COMPLETION ||
 			    xfer->status == USBD_SHORT_XFER) {
-				error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
-				if (error) {
-					printf("move error\n");
-					kurb->status = USBD_IOERROR;
-					*urb = *kurb;
-					usbd_free_xfer(xfer);
-					free(wrap, M_TEMP, sizeof(*wrap));
-					while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
-						TAILQ_REMOVE(&kurb->xfers_head, wrap, entries);
-						usbd_free_xfer(wrap->xfer);
+				if (kurb->read) {
+					error = uiomove(KERNADDR(&xfer->dmabuf, 0), xfer->actlen, &uio);
+					if (error) {
+						printf("move error\n");
+						kurb->status = USBD_IOERROR;
+						*urb = *kurb;
+						usbd_free_xfer(xfer);
 						free(wrap, M_TEMP, sizeof(*wrap));
+						while ((wrap = TAILQ_FIRST(&kurb->xfers_head))) {
+							TAILQ_REMOVE(&kurb->xfers_head, wrap, entries);
+							usbd_free_xfer(wrap->xfer);
+							free(wrap, M_TEMP, sizeof(*wrap));
+						}
+						free(kurb, M_TEMP, sizeof(*kurb));
+						splx(s);
+						return (0);
 					}
-					free(kurb, M_TEMP, sizeof(*kurb));
-					splx(s);
-					return (0);
 				}
 			} else {
 				printf("status not ok\n");

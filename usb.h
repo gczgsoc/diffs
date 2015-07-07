@@ -635,6 +635,7 @@ struct xfer_w {
 
 struct ctl_urb {
 	struct usb_ctl_request req;
+	int read;
 	void *buffer;
 	int actlen;
 	void *sce;

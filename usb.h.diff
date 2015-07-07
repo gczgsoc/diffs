@@ -1,5 +1,5 @@
 --- usb.h.orig	Thu Jun  4 13:37:23 2015
-+++ usb.h	Mon Jul  6 17:50:46 2015
++++ usb.h	Tue Jul  7 04:46:59 2015
 @@ -1,4 +1,4 @@
 -/*	$OpenBSD: usb.h,v 1.50 2015/02/14 06:18:58 uebayasi Exp $ */
 +/*	$OpenBSD: usb.h,v 1.52 2015/06/29 10:52:40 mpi Exp $ */
@@ -50,7 +50,7 @@
  #define UPS_PORT_TEST			0x0800
  #define UPS_PORT_INDICATOR		0x1000
  
-@@ -612,6 +627,26 @@
+@@ -612,6 +627,27 @@
  	int	ucr_actlen;		/* actual length transferred */
  };
  
@@ -62,6 +62,7 @@
 +
 +struct ctl_urb {
 +	struct usb_ctl_request req;
++	int read;
 +	void *buffer;
 +	int actlen;
 +	void *sce;
@@ -77,7 +78,7 @@
  struct usb_alt_interface {
  	int	uai_config_index;
  	int	uai_interface_index;
-@@ -748,10 +783,13 @@
+@@ -748,10 +784,13 @@
  #define USB_GET_ENDPOINT_DESC	_IOWR('U', 108, struct usb_endpoint_desc)
  #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
  #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
