@@ -278,6 +278,7 @@ obsd_close(struct libusb_device_handle *handle)
 	if (dpriv->devname) {
 		usbi_dbg("close: fd %d", dpriv->fd);
 
+		usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 		close(dpriv->fd);
 		dpriv->fd = -1;
 	}
@@ -393,9 +394,12 @@ obsd_release_interface(struct libusb_device_handle *handle, int iface)
 	struct handle_priv *hpriv = (struct handle_priv *)handle->os_priv;
 	int i;
 
-	for (i = 0; i < USB_MAX_ENDPOINTS; i++)
-		if (hpriv->endpoints[i] >= 0)
+	for (i = 0; i < USB_MAX_ENDPOINTS; i++) {
+		if (hpriv->endpoints[i] >= 0) {
+			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 			close(hpriv->endpoints[i]);
+		}
+	}
 
 	return (LIBUSB_SUCCESS);
 }
