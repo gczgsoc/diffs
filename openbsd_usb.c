@@ -396,7 +396,7 @@ obsd_release_interface(struct libusb_device_handle *handle, int iface)
 
 	for (i = 0; i < USB_MAX_ENDPOINTS; i++) {
 		if (hpriv->endpoints[i] >= 0) {
-			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
+			usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[i]);
 			close(hpriv->endpoints[i]);
 		}
 	}
@@ -501,11 +501,6 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 		err = _sync_gen_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_BULK:
-		if (IS_XFEROUT(transfer) &&
-		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
-			err = LIBUSB_ERROR_NOT_SUPPORTED;
-			break;
-		}
 		err = _sync_bulk_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
@@ -560,7 +555,7 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 	struct handle_priv *hpriv = NULL;
 	struct device_priv *dpriv = NULL;
 	struct usbi_transfer *itransfer;
-	struct ctl_urb get_urb;
+	struct usb_ctl_request req;
 	struct pollfd *pollfd;
 	int i, err = 0;
 	int endpt;
@@ -608,88 +603,47 @@ out:
 
 		if (pollfd->revents & POLLERR) {
 			usbi_dbg("got a disconnect event");
-			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 			usbi_handle_disconnect(handle);
+			//remove pollfds?
 			continue;
 		}
 
-		if (fd == dpriv->fd) {
-			while (1) {
+		while (1) {
 repeat:
-				if (ioctl(dpriv->fd, USB_GET_COMPLETED, &get_urb)) {
-					err = 0;
-					break;
-				}
-				itransfer = get_urb.user_context;
-
-				switch(get_urb.status) {
-				case USBD_NORMAL_COMPLETION:
-				case USBD_SHORT_XFER:
-					usbi_mutex_lock(&itransfer->lock);
-					itransfer->transferred += get_urb.actlen;
-					usbi_dbg("transferred %d", itransfer->transferred);
-					usbi_mutex_unlock(&itransfer->lock);
-
-					error_code = LIBUSB_TRANSFER_COMPLETED;
-					break;
-				case USBD_IN_PROGRESS:
-					goto repeat;
-				/* errors */
-				case USBD_CANCELLED:
-					error_code = LIBUSB_TRANSFER_CANCELLED;
-					break;
-				case USBD_STALLED:
-					error_code = LIBUSB_TRANSFER_STALL;
-					break;
-				default:
-					error_code = LIBUSB_TRANSFER_ERROR;
-					break;
-				}
-				if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
-					usbi_dbg("error completing");
-					break;
-				}
+			if (ioctl(fd, USB_GET_COMPLETED, &req)) {
+				err = 0;
+				break;
 			}
-		} else {
-			while (1) {
-rep:
-				if (ioctl(fd, USB_ASYNC_COMPLETE, &get_urb)) {
-					err = 0;
-					break;
-				}
-				itransfer = get_urb.user_context;
+			itransfer = req.ucr_context;
 
-				switch(get_urb.status) {
-				case USBD_NORMAL_COMPLETION:
-				case USBD_SHORT_XFER:
-					usbi_mutex_lock(&itransfer->lock);
-					itransfer->transferred += get_urb.actlen;
-					usbi_dbg("transferred %d", itransfer->transferred);
-					usbi_mutex_unlock(&itransfer->lock);
+			switch(req.ucr_status) {
+			case USBD_NORMAL_COMPLETION:
+				usbi_mutex_lock(&itransfer->lock);
+				itransfer->transferred += req.ucr_actlen;
+				usbi_dbg("transferred %d", itransfer->transferred);
+				usbi_mutex_unlock(&itransfer->lock);
 
-					error_code = LIBUSB_TRANSFER_COMPLETED;
-					break;
-				case USBD_IN_PROGRESS:
-					usbi_dbg("e: in progress");
-					goto rep;
-				/* errors */
-				case USBD_CANCELLED:
-					error_code = LIBUSB_TRANSFER_CANCELLED;
-					usbi_dbg("e: cancelled");
-					break;
-				case USBD_STALLED:
-					error_code = LIBUSB_TRANSFER_STALL;
-					usbi_dbg("e: stall");
-					break;
-				default:
-					error_code = LIBUSB_TRANSFER_ERROR;
-					usbi_dbg("e: some error");
-					break;
-				}
-				if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
-					usbi_dbg("error completing");
-					break;
-				}
+				error_code = LIBUSB_TRANSFER_COMPLETED;
+				break;
+			case USBD_SHORT_XFER:
+				error_code = LIBUSB_TRANSFER_ERROR;
+				break;
+			case USBD_IN_PROGRESS:
+				goto repeat;
+			/* errors */
+			case USBD_CANCELLED:
+				error_code = LIBUSB_TRANSFER_CANCELLED;
+				break;
+			case USBD_STALLED:
+				error_code = LIBUSB_TRANSFER_STALL;
+				break;
+			default:
+				error_code = LIBUSB_TRANSFER_ERROR;
+				break;
+			}
+			if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
+				usbi_dbg("error completing");
+				break;
 			}
 		}
 		if (err) {
@@ -806,7 +760,6 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	struct libusb_control_setup *setup;
 	struct device_priv *dpriv;
 	struct usb_ctl_request req;
-	struct ctl_urb put_urb;
 
 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
@@ -848,15 +801,11 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		}
 		close(fd);
 	} else {
-		put_urb.req = req;
-		put_urb.user_context = itransfer;
+		req.ucr_context = itransfer;
+		req.ucr_timeout = transfer->timeout;
+		req.ucr_read = req.ucr_request.bmRequestType & UT_READ;
 
-		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0) {
-			usbi_dbg("fail set timeout");
-			return _errno_to_libusb(errno);
-		}
-
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &put_urb)) < 0) {
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0) {
 			usbi_dbg("fail do request");
 			return _errno_to_libusb(errno);
 		}
@@ -917,7 +866,7 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
 	struct device_priv *dpriv;
-	struct ctl_urb put_urb;
+	struct usb_ctl_request req;
 	int fd, nr = 1;
 
 	usbi_dbg("");
@@ -935,32 +884,23 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 	if ((fd = _access_endpoint(transfer)) < 0)
 		return _errno_to_libusb(errno);
 
-	if ((ioctl(fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
+	req.ucr_timeout = transfer->timeout;
+	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+		req.ucr_flags |= USBD_SHORT_XFER_OK;
+
+	if (transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET)
+		req.ucr_flags |= USBD_FORCE_SHORT_XFER;
+
+	req.ucr_read = IS_XFERIN(transfer);
+	req.ucr_data = transfer->buffer;
+	req.ucr_actlen = transfer->length;
+	req.ucr_context = itransfer;
+	if (ioctl(fd, USB_DO_REQUEST, &req))
 		return _errno_to_libusb(errno);
-
-	if (IS_XFERIN(transfer)) {
-		if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-			if ((ioctl(fd, USB_SET_SHORT_XFER, &nr)) < 0)
-				return _errno_to_libusb(errno);
-
-		put_urb.read = 1;
-		put_urb.buffer = transfer->buffer;
-		put_urb.actlen = transfer->length;
-		put_urb.user_context = itransfer;
-		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
-			return _errno_to_libusb(errno);
-	} else {
-		put_urb.read = 0;
-		put_urb.buffer = transfer->buffer;
-		put_urb.actlen = transfer->length;
-		put_urb.user_context = itransfer;
-		if (ioctl(fd, USB_ASYNC_SUBMIT, &put_urb))
-			return _errno_to_libusb(errno);
-	}
-
 
 	return (0);
 }
+
 int
 _sync_gen_transfer(struct usbi_transfer *itransfer)
 {
