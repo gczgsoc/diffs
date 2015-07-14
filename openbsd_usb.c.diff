@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Tue Jul 14 17:39:13 2015
++++ openbsd_usb.c	Tue Jul 14 23:09:14 2015
 @@ -29,6 +29,7 @@
  #include <unistd.h>
  
@@ -105,7 +105,7 @@
  
  	return (LIBUSB_SUCCESS);
  }
-@@ -528,6 +548,118 @@
+@@ -528,6 +548,115 @@
  }
  
  int
@@ -145,7 +145,6 @@
 +			}
 +
 +			for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++) {
-+				usbi_dbg("is it %d?", hpriv->endpoints[endpt]);
 +				if (hpriv->endpoints[endpt] == pollfd->fd) {
 +					fd = hpriv->endpoints[endpt];
 +					goto out;
@@ -202,10 +201,8 @@
 +				error_code = LIBUSB_TRANSFER_ERROR;
 +				break;
 +			}
-+			if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
-+				usbi_dbg("error completing");
++			if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
 +				break;
-+			}
 +		}
 +		if (err) {
 +			err = errno;
@@ -224,7 +221,7 @@
  obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
  	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-@@ -669,11 +801,16 @@
+@@ -669,11 +798,14 @@
  		}
  		close(fd);
  	} else {
@@ -234,17 +231,14 @@
 +		req.ucr_timeout = transfer->timeout;
 +		req.ucr_read = req.ucr_request.bmRequestType & UT_READ;
  
--		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
-+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0) {
-+			usbi_dbg("fail do request");
+ 		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
  			return _errno_to_libusb(errno);
-+		}
 +
 +		return (0);
  	}
  
  	itransfer->transferred = req.ucr_actlen;
-@@ -688,10 +825,12 @@
+@@ -688,10 +820,12 @@
  {
  	struct handle_priv *hpriv;
  	struct device_priv *dpriv;
@@ -257,7 +251,7 @@
  	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
  
-@@ -705,15 +844,61 @@
+@@ -705,15 +839,61 @@
  		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
  		    dpriv->devname, endpt);
  
@@ -285,7 +279,7 @@
 +	struct libusb_transfer *transfer;
 +	struct device_priv *dpriv;
 +	struct usb_ctl_request req;
-+	int fd, nr = 1;
++	int fd;
 +
 +	usbi_dbg("");
 +

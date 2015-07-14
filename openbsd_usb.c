@@ -584,7 +584,6 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 			}
 
 			for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++) {
-				usbi_dbg("is it %d?", hpriv->endpoints[endpt]);
 				if (hpriv->endpoints[endpt] == pollfd->fd) {
 					fd = hpriv->endpoints[endpt];
 					goto out;
@@ -641,10 +640,8 @@ repeat:
 				error_code = LIBUSB_TRANSFER_ERROR;
 				break;
 			}
-			if ((err = usbi_handle_transfer_completion(itransfer, error_code))) {
-				usbi_dbg("error completing");
+			if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
 				break;
-			}
 		}
 		if (err) {
 			err = errno;
@@ -805,10 +802,8 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		req.ucr_timeout = transfer->timeout;
 		req.ucr_read = req.ucr_request.bmRequestType & UT_READ;
 
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0) {
-			usbi_dbg("fail do request");
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
 			return _errno_to_libusb(errno);
-		}
 
 		return (0);
 	}
@@ -867,7 +862,7 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 	struct libusb_transfer *transfer;
 	struct device_priv *dpriv;
 	struct usb_ctl_request req;
-	int fd, nr = 1;
+	int fd;
 
 	usbi_dbg("");
 

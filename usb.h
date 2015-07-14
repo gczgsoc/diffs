@@ -618,12 +618,6 @@ typedef struct {
 
 /*** ioctl() related stuff ***/
 
-struct xfer_w {
-	struct usb_ctl_request *parent;
-	void *xfer;
-	TAILQ_ENTRY(xfer_w) entries;
-};
-
 struct usb_ctl_request {
 	int	ucr_addr;
 	usb_device_request_t ucr_request;
@@ -635,11 +629,9 @@ struct usb_ctl_request {
 	int 	ucr_timeout;
 	int 	ucr_status;
 	int 	ucr_read;
-	int	ucr_count;
 	void 	*ucr_sce;
 	void	*ucr_context;
 	void *xfer;
-	TAILQ_HEAD(, xfer_w) xfers_head;
 	TAILQ_ENTRY(usb_ctl_request) entries;
 };
 
