@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Tue Jul 14 22:56:14 2015
++++ ugen.c	Thu Jul 16 17:10:55 2015
 @@ -1,4 +1,4 @@
 -/*	$OpenBSD: ugen.c,v 1.81 2015/02/10 21:56:09 miod Exp $ */
 +/*	$OpenBSD: ugen.c,v 1.84 2015/06/15 15:45:28 mpi Exp $ */
@@ -186,7 +186,7 @@
  	(void)usbd_transfer(xfer);
  
  	if (sce->state & UGEN_ASLP) {
-@@ -939,9 +989,253 @@
+@@ -939,9 +989,252 @@
  	return (usbd_get_interface_altindex(iface));
  }
  
@@ -328,11 +328,10 @@
 +			}
 +		}
 +	}
-+	// one of these flags causes a problem with ehci
-+	//if (kreq->ucr_flags & USBD_FORCE_SHORT_XFER)
-+	//	flags = USBD_FORCE_SHORT_XFER;
-+	//if (kreq->ucr_flags & USBD_SHORT_XFER_OK)
-+	//	flags |= USBD_SHORT_XFER_OK;
++	if (kreq->ucr_flags & USBD_FORCE_SHORT_XFER)
++		flags |= USBD_FORCE_SHORT_XFER;
++	if (kreq->ucr_flags & USBD_SHORT_XFER_OK)
++		flags |= USBD_SHORT_XFER_OK;
 +	usbd_setup_xfer(xfer, sce->pipeh, kreq, NULL, len,
 +	    flags | USBD_NO_COPY,
 +	    kreq->ucr_timeout, (usbd_callback) ugen_async_callback);
@@ -442,7 +441,7 @@
  {
  	struct ugen_endpoint *sce;
  	int err;
-@@ -986,6 +1280,78 @@
+@@ -986,6 +1279,86 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -461,6 +460,10 @@
 +			if (error)
 +				return (error);
 +		} else {
++			if (!sce->edesc) {
++				printf("ugenioctl: no edesc\n");
++				return (EINVAL);
++			}
 +			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 +			case UE_INTERRUPT:
 +			case UE_ISOCHRONOUS:
@@ -500,6 +503,10 @@
 +			if (error)
 +				return (error);
 +		} else {
++			if (!sce->edesc) {
++				printf("ugenioctl: no edesc\n");
++				return (EINVAL);
++			}
 +			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 +			case UE_INTERRUPT:
 +			case UE_ISOCHRONOUS:
@@ -521,7 +528,7 @@
  	default:
  		break;
  	}
-@@ -1141,69 +1507,6 @@
+@@ -1141,69 +1514,6 @@
  			return (EINVAL);
  		break;
  	}
@@ -591,7 +598,7 @@
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
  				     (struct usb_device_info *)addr, 1);
-@@ -1248,44 +1551,54 @@
+@@ -1248,44 +1558,54 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC

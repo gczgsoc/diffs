@@ -1127,11 +1127,10 @@ int ugen_submit_bulk(struct ugen_softc *sc, struct
 			}
 		}
 	}
-	// one of these flags causes a problem with ehci
-	//if (kreq->ucr_flags & USBD_FORCE_SHORT_XFER)
-	//	flags = USBD_FORCE_SHORT_XFER;
-	//if (kreq->ucr_flags & USBD_SHORT_XFER_OK)
-	//	flags |= USBD_SHORT_XFER_OK;
+	if (kreq->ucr_flags & USBD_FORCE_SHORT_XFER)
+		flags |= USBD_FORCE_SHORT_XFER;
+	if (kreq->ucr_flags & USBD_SHORT_XFER_OK)
+		flags |= USBD_SHORT_XFER_OK;
 	usbd_setup_xfer(xfer, sce->pipeh, kreq, NULL, len,
 	    flags | USBD_NO_COPY,
 	    kreq->ucr_timeout, (usbd_callback) ugen_async_callback);
@@ -1295,6 +1294,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			if (error)
 				return (error);
 		} else {
+			if (!sce->edesc) {
+				printf("ugenioctl: no edesc\n");
+				return (EINVAL);
+			}
 			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 			case UE_INTERRUPT:
 			case UE_ISOCHRONOUS:
@@ -1334,6 +1337,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			if (error)
 				return (error);
 		} else {
+			if (!sce->edesc) {
+				printf("ugenioctl: no edesc\n");
+				return (EINVAL);
+			}
 			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 			case UE_INTERRUPT:
 			case UE_ISOCHRONOUS:
