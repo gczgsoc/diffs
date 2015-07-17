@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Tue Jul 14 23:09:14 2015
++++ openbsd_usb.c	Thu Jul 16 17:06:28 2015
 @@ -29,6 +29,7 @@
  #include <unistd.h>
  
@@ -105,7 +105,7 @@
  
  	return (LIBUSB_SUCCESS);
  }
-@@ -528,6 +548,115 @@
+@@ -528,6 +548,121 @@
  }
  
  int
@@ -163,8 +163,14 @@
 +
 +		if (pollfd->revents & POLLERR) {
 +			usbi_dbg("got a disconnect event");
++			for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++) {
++				if (hpriv->endpoints[endpt] >= 0) {
++					usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[endpt]);
++					close(hpriv->endpoints[endpt]);
++				}
++			}
++			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 +			usbi_handle_disconnect(handle);
-+			//remove pollfds?
 +			continue;
 +		}
 +
@@ -221,7 +227,18 @@
  obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
  	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-@@ -669,11 +798,14 @@
+@@ -648,8 +783,9 @@
+ 	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
+ 	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
+ 
++	req.ucr_flags = 0;
+ 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+-		req.ucr_flags = USBD_SHORT_XFER_OK;
++		req.ucr_flags |= USBD_SHORT_XFER_OK;
+ 
+ 	if (dpriv->devname == NULL) {
+ 		/*
+@@ -669,11 +805,14 @@
  		}
  		close(fd);
  	} else {
@@ -238,7 +255,7 @@
  	}
  
  	itransfer->transferred = req.ucr_actlen;
-@@ -688,10 +820,12 @@
+@@ -688,10 +827,12 @@
  {
  	struct handle_priv *hpriv;
  	struct device_priv *dpriv;
@@ -251,7 +268,7 @@
  	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
  
-@@ -705,15 +839,61 @@
+@@ -705,15 +846,62 @@
  		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
  		    dpriv->devname, endpt);
  
@@ -297,6 +314,7 @@
 +		return _errno_to_libusb(errno);
 +
 +	req.ucr_timeout = transfer->timeout;
++	req.ucr_flags = 0;
 +	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 +		req.ucr_flags |= USBD_SHORT_XFER_OK;
 +

@@ -602,8 +602,14 @@ out:
 
 		if (pollfd->revents & POLLERR) {
 			usbi_dbg("got a disconnect event");
+			for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++) {
+				if (hpriv->endpoints[endpt] >= 0) {
+					usbi_remove_pollfd(HANDLE_CTX(handle), hpriv->endpoints[endpt]);
+					close(hpriv->endpoints[endpt]);
+				}
+			}
+			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 			usbi_handle_disconnect(handle);
-			//remove pollfds?
 			continue;
 		}
 
@@ -777,8 +783,9 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
 	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
 
+	req.ucr_flags = 0;
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-		req.ucr_flags = USBD_SHORT_XFER_OK;
+		req.ucr_flags |= USBD_SHORT_XFER_OK;
 
 	if (dpriv->devname == NULL) {
 		/*
@@ -880,6 +887,7 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 		return _errno_to_libusb(errno);
 
 	req.ucr_timeout = transfer->timeout;
+	req.ucr_flags = 0;
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 		req.ucr_flags |= USBD_SHORT_XFER_OK;
 
