@@ -776,6 +776,7 @@ struct usb_device_stats {
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
 #define USB_GET_COMPLETED	_IOWR('U', 115, struct usb_ctl_request)
+#define USB_CANCEL		_IOWR('U', 116, struct usb_ctl_request)
 
 /* Modem device */
 #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)

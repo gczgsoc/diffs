@@ -90,6 +90,7 @@ usbd_status usbd_open_pipe(struct usbd_interface *iface, u_int8_t address,
     u_int8_t flags, struct usbd_pipe **pipe);
 usbd_status usbd_close_pipe(struct usbd_pipe *pipe);
 usbd_status usbd_transfer(struct usbd_xfer *req);
+void usbd_abort_transfer(struct usbd_xfer *req);
 struct usbd_xfer *usbd_alloc_xfer(struct usbd_device *);
 void usbd_free_xfer(struct usbd_xfer *xfer);
 void usbd_setup_xfer(struct usbd_xfer *xfer, struct usbd_pipe *pipe,

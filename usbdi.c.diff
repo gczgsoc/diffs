@@ -1,0 +1,31 @@
+--- usbdi.c.orig	Mon Jul 20 19:20:47 2015
++++ usbdi.c	Tue Jul 21 15:47:54 2015
+@@ -351,6 +351,23 @@
+ 	return (xfer->status);
+ }
+ 
++void
++usbd_abort_transfer(struct usbd_xfer *xfer) {
++	struct usbd_pipe *pipe = xfer->pipe;
++
++#ifdef DIAGNOSTIC
++	if (pipe == NULL) {
++		printf("usbd_abort_transfer: pipe == NULL\n");
++		return;
++	}
++	if (pipe->methods == NULL || pipe->methods->abort == NULL) {
++		printf("usbd_abort_transfer: pipe=%p no abort method\n", pipe);
++		return;
++	}
++#endif
++	pipe->methods->abort(xfer);
++}
++
+ void *
+ usbd_alloc_buffer(struct usbd_xfer *xfer, u_int32_t size)
+ {
+@@ -1112,4 +1129,3 @@
+ 		USETW2(p->bString[i], 0, s[i]);
+ 	return (2 * i + 2);
+ }
+-

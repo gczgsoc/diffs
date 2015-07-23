@@ -1,5 +1,5 @@
 --- usbdi.h.orig	Thu Jul  9 04:17:00 2015
-+++ usbdi.h	Thu Jul  9 04:17:37 2015
++++ usbdi.h	Mon Jul 20 21:36:31 2015
 @@ -78,7 +78,7 @@
  #define USBD_NO_COPY		0x01	/* do not copy data to DMA buffer */
  #define USBD_SYNCHRONOUS	0x02	/* wait for completion */
@@ -9,3 +9,11 @@
  #define USBD_CATCH		0x10	/* catch signals while sleeping */
  
  #define USBD_NO_TIMEOUT 0
+@@ -90,6 +90,7 @@
+     u_int8_t flags, struct usbd_pipe **pipe);
+ usbd_status usbd_close_pipe(struct usbd_pipe *pipe);
+ usbd_status usbd_transfer(struct usbd_xfer *req);
++void usbd_abort_transfer(struct usbd_xfer *req);
+ struct usbd_xfer *usbd_alloc_xfer(struct usbd_device *);
+ void usbd_free_xfer(struct usbd_xfer *xfer);
+ void usbd_setup_xfer(struct usbd_xfer *xfer, struct usbd_pipe *pipe,

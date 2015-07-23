@@ -534,9 +534,20 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 int
 obsd_cancel_transfer(struct usbi_transfer *itransfer)
 {
+	struct libusb_transfer *transfer;
+	struct device_priv *dpriv;
+	struct usb_ctl_request req;
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
 	usbi_dbg("");
 
-	return (LIBUSB_ERROR_NOT_SUPPORTED);
+	req.ucr_context = itransfer;
+	if (ioctl(dpriv->fd, USB_CANCEL, &req))
+		return _errno_to_libusb(errno);
+
+	return (LIBUSB_SUCCESS);
 }
 
 void
@@ -646,8 +657,13 @@ repeat:
 				error_code = LIBUSB_TRANSFER_ERROR;
 				break;
 			}
-			if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
-				break;
+			if (error_code == LIBUSB_TRANSFER_CANCELLED) {
+				if ((err = usbi_handle_transfer_cancellation(itransfer)))
+					break;
+			} else {
+				if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
+					break;
+			}
 		}
 		if (err) {
 			err = errno;

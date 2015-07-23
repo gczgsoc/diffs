@@ -1,5 +1,5 @@
 --- openbsd_usb.c.orig	Wed Jun  3 15:22:32 2015
-+++ openbsd_usb.c	Thu Jul 16 17:06:28 2015
++++ openbsd_usb.c	Tue Jul 21 16:12:49 2015
 @@ -29,6 +29,7 @@
  #include <unistd.h>
  
@@ -105,7 +105,29 @@
  
  	return (LIBUSB_SUCCESS);
  }
-@@ -528,6 +548,121 @@
+@@ -514,9 +534,20 @@
+ int
+ obsd_cancel_transfer(struct usbi_transfer *itransfer)
+ {
++	struct libusb_transfer *transfer;
++	struct device_priv *dpriv;
++	struct usb_ctl_request req;
++
++	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
++	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
++
+ 	usbi_dbg("");
+ 
+-	return (LIBUSB_ERROR_NOT_SUPPORTED);
++	req.ucr_context = itransfer;
++	if (ioctl(dpriv->fd, USB_CANCEL, &req))
++		return _errno_to_libusb(errno);
++
++	return (LIBUSB_SUCCESS);
+ }
+ 
+ void
+@@ -528,6 +559,126 @@
  }
  
  int
@@ -207,8 +229,13 @@
 +				error_code = LIBUSB_TRANSFER_ERROR;
 +				break;
 +			}
-+			if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
-+				break;
++			if (error_code == LIBUSB_TRANSFER_CANCELLED) {
++				if ((err = usbi_handle_transfer_cancellation(itransfer)))
++					break;
++			} else {
++				if ((err = usbi_handle_transfer_completion(itransfer, error_code)))
++					break;
++			}
 +		}
 +		if (err) {
 +			err = errno;
@@ -227,7 +254,7 @@
  obsd_handle_transfer_completion(struct usbi_transfer *itransfer)
  {
  	return usbi_handle_transfer_completion(itransfer, LIBUSB_TRANSFER_COMPLETED);
-@@ -648,8 +783,9 @@
+@@ -648,8 +799,9 @@
  	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
  	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
  
@@ -238,7 +265,7 @@
  
  	if (dpriv->devname == NULL) {
  		/*
-@@ -669,11 +805,14 @@
+@@ -669,11 +821,14 @@
  		}
  		close(fd);
  	} else {
@@ -255,7 +282,7 @@
  	}
  
  	itransfer->transferred = req.ucr_actlen;
-@@ -688,10 +827,12 @@
+@@ -688,10 +843,12 @@
  {
  	struct handle_priv *hpriv;
  	struct device_priv *dpriv;
@@ -268,7 +295,7 @@
  	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
  	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
  
-@@ -705,15 +846,62 @@
+@@ -705,15 +862,62 @@
  		snprintf(devnode, sizeof(devnode), DEVPATH "%s.%02d",
  		    dpriv->devname, endpt);
  
