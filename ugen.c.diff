@@ -1,5 +1,5 @@
 --- ugen.c.orig	Wed Jun  3 14:35:32 2015
-+++ ugen.c	Wed Jul 22 22:26:54 2015
++++ ugen.c	Thu Jul 23 20:13:42 2015
 @@ -1,4 +1,4 @@
 -/*	$OpenBSD: ugen.c,v 1.81 2015/02/10 21:56:09 miod Exp $ */
 +/*	$OpenBSD: ugen.c,v 1.84 2015/06/15 15:45:28 mpi Exp $ */
@@ -492,7 +492,7 @@
  {
  	struct ugen_endpoint *sce;
  	int err;
-@@ -986,6 +1322,125 @@
+@@ -986,6 +1322,131 @@
  			return (EINVAL);
  		sce->timeout = *(int *)addr;
  		return (0);
@@ -583,27 +583,33 @@
 +	{
 +		struct usb_ctl_request *req = (void *)addr;
 +		struct usb_ctl_request *kreq;
++		struct usb_ctl_request *np;
 +		int s;
 +
 +		sce = &sc->sc_endpoints[endpt][IN];
 +
 +		s = splusb();
 +		rw_enter_write(&q_lock);
-+		TAILQ_FOREACH(kreq, &sce->submit_queue, entries) {
-+			if (kreq->ucr_context == req->ucr_context)
-+				break;
-+			kreq = NULL;
-+		}
 +		kreq = NULL;
++		TAILQ_FOREACH(np, &sce->submit_queue, entries) {
++			if (np->ucr_context == req->ucr_context) {
++				kreq = np;
++				break;
++			}
++		}
 +		if (kreq == NULL) {
-+			TAILQ_FOREACH(kreq, &sce->complete_queue, entries) {
-+				if (kreq->ucr_context == req->ucr_context)
++			TAILQ_FOREACH(np, &sce->complete_queue, entries) {
++				if (np->ucr_context == req->ucr_context) {
++					kreq = np;
 +					break;
-+				kreq = NULL;
++				}
 +			}
 +			if (kreq == NULL) {
 +				/* error, neither completed
 +				 * nor submitted */
++				rw_exit_write(&q_lock);
++				splx(s);
++				return (EINVAL);
 +			} else {
 +				kreq->ucr_status = USBD_CANCELLED;
 +			}
@@ -618,7 +624,7 @@
  	default:
  		break;
  	}
-@@ -1141,69 +1596,6 @@
+@@ -1141,69 +1602,6 @@
  			return (EINVAL);
  		break;
  	}
@@ -688,7 +694,7 @@
  	case USB_GET_DEVICEINFO:
  		usbd_fill_deviceinfo(sc->sc_udev,
  				     (struct usb_device_info *)addr, 1);
-@@ -1248,45 +1640,57 @@
+@@ -1248,45 +1646,57 @@
  	if (sce == NULL)
  		return (POLLERR);
  #ifdef DIAGNOSTIC

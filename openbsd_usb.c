@@ -87,6 +87,8 @@ static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
 static int _sync_control_transfer(struct usbi_transfer *);
 static int _sync_bulk_transfer(struct usbi_transfer *itransfer);
+static int _cancel_control_transfer(struct usbi_transfer *);
+static int _cancel_bulk_transfer(struct usbi_transfer *);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
 
@@ -535,17 +537,36 @@ int
 obsd_cancel_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
+	struct handle_priv *hpriv;
 	struct device_priv *dpriv;
-	struct usb_ctl_request req;
-
-	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
-	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+	int err = 0;
 
 	usbi_dbg("");
 
-	req.ucr_context = itransfer;
-	if (ioctl(dpriv->fd, USB_CANCEL, &req))
-		return _errno_to_libusb(errno);
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	switch (transfer->type) {
+	case LIBUSB_TRANSFER_TYPE_CONTROL:
+		err = _cancel_control_transfer(itransfer);
+		break;
+	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
+		err = LIBUSB_ERROR_NOT_SUPPORTED;
+		break;
+	case LIBUSB_TRANSFER_TYPE_BULK:
+		err = _cancel_bulk_transfer(itransfer);
+		break;
+	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
+		err = LIBUSB_ERROR_NOT_SUPPORTED;
+		break;
+	case LIBUSB_TRANSFER_TYPE_BULK_STREAM:
+		err = LIBUSB_ERROR_NOT_SUPPORTED;
+		break;
+	}
+
+	if (err)
+		return (err);
 
 	return (LIBUSB_SUCCESS);
 }
@@ -658,6 +679,7 @@ repeat:
 				break;
 			}
 			if (error_code == LIBUSB_TRANSFER_CANCELLED) {
+				usbi_dbg("cancelling the transfer");
 				if ((err = usbi_handle_transfer_cancellation(itransfer)))
 					break;
 			} else {
@@ -836,6 +858,67 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	usbi_dbg("transferred %d", itransfer->transferred);
 
 	return (0);
+}
+
+int
+_cancel_control_transfer(struct usbi_transfer *itransfer) {
+	struct libusb_transfer *transfer;
+	struct handle_priv *hpriv;
+	struct device_priv *dpriv;
+	struct usb_ctl_request req;
+	int err = 0;
+
+	usbi_dbg("");
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	req.ucr_context = itransfer;
+	if (ioctl(dpriv->fd, USB_CANCEL, &req)) {
+		usbi_dbg("transfer not found");
+		return _errno_to_libusb(errno);
+	}
+
+	return (LIBUSB_SUCCESS);
+}
+
+int
+_cancel_bulk_transfer(struct usbi_transfer *itransfer) {
+	struct libusb_transfer *transfer;
+	struct handle_priv *hpriv;
+	struct device_priv *dpriv;
+	struct usb_ctl_request req;
+	int fd;
+	int err = 0;
+
+	usbi_dbg("");
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	/*
+	 * Bulk, Interrupt or Isochronous transfer depends on the
+	 * endpoint and thus the node to open.
+	 */
+	if ((fd = _access_endpoint(transfer)) < 0)
+		return _errno_to_libusb(errno);
+
+	req.ucr_context = itransfer;
+	if (ioctl(fd, USB_CANCEL, &req)) {
+		usbi_dbg("transfer not found");
+		return _errno_to_libusb(errno);
+	}
+	usbi_dbg("transfer found");
+
+	return (LIBUSB_SUCCESS);
 }
 
 int

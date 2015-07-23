@@ -1409,27 +1409,33 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 	{
 		struct usb_ctl_request *req = (void *)addr;
 		struct usb_ctl_request *kreq;
+		struct usb_ctl_request *np;
 		int s;
 
 		sce = &sc->sc_endpoints[endpt][IN];
 
 		s = splusb();
 		rw_enter_write(&q_lock);
-		TAILQ_FOREACH(kreq, &sce->submit_queue, entries) {
-			if (kreq->ucr_context == req->ucr_context)
-				break;
-			kreq = NULL;
-		}
 		kreq = NULL;
+		TAILQ_FOREACH(np, &sce->submit_queue, entries) {
+			if (np->ucr_context == req->ucr_context) {
+				kreq = np;
+				break;
+			}
+		}
 		if (kreq == NULL) {
-			TAILQ_FOREACH(kreq, &sce->complete_queue, entries) {
-				if (kreq->ucr_context == req->ucr_context)
+			TAILQ_FOREACH(np, &sce->complete_queue, entries) {
+				if (np->ucr_context == req->ucr_context) {
+					kreq = np;
 					break;
-				kreq = NULL;
+				}
 			}
 			if (kreq == NULL) {
 				/* error, neither completed
 				 * nor submitted */
+				rw_exit_write(&q_lock);
+				splx(s);
+				return (EINVAL);
 			} else {
 				kreq->ucr_status = USBD_CANCELLED;
 			}
