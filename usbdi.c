@@ -729,6 +729,9 @@ void
 usb_transfer_complete(struct usbd_xfer *xfer)
 {
 	struct usbd_pipe *pipe = xfer->pipe;
+	struct usbd_xfer *np;
+	struct usbd_xfer *prev;
+	struct usbd_xfer *temp;
 	int polling;
 
 	SPLUSBCHECK;
@@ -775,13 +778,18 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 
 	if (!pipe->repeat) {
 		/* Remove request from queue. */
-#ifdef DIAGNOSTIC
-		if (xfer != SIMPLEQ_FIRST(&pipe->queue))
-			printf("usb_transfer_complete: bad dequeue %p != %p\n",
-			    xfer, SIMPLEQ_FIRST(&pipe->queue));
 		xfer->busy_free = XFER_FREE;
-#endif
-		SIMPLEQ_REMOVE_HEAD(&pipe->queue, next);
+		prev = NULL;
+		SIMPLEQ_FOREACH_SAFE(np, &pipe->queue, next, temp) {
+			if (np == xfer) {
+				if (prev)
+					SIMPLEQ_REMOVE_AFTER(&pipe->queue, prev, next);
+				else
+					SIMPLEQ_REMOVE_HEAD(&pipe->queue, next);
+				break;
+			}
+			prev = np;
+		}
 	}
 	DPRINTFN(5,("usb_transfer_complete: repeat=%d new head=%p\n",
 	    pipe->repeat, SIMPLEQ_FIRST(&pipe->queue)));
