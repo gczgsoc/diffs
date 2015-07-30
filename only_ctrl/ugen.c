@@ -46,9 +46,13 @@
 #include <sys/vnode.h>
 #include <sys/poll.h>
 
+#include <machine/bus.h>
+
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdi_util.h>
+#include <dev/usb/usbdivar.h>
+#include <dev/usb/usb_mem.h>
 #include <dev/usb/usbdevs.h>
 
 #ifdef UGEN_DEBUG
@@ -422,7 +426,6 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 {
 	struct ugen_endpoint *sce;
 	int dir, i;
-	int s;
 
 #ifdef DIAGNOSTIC
 	if (!sc->sc_is_open[endpt]) {
@@ -477,7 +480,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 {
 	struct ugen_endpoint *sce = &sc->sc_endpoints[endpt][IN];
 	u_int32_t n, tn;
-	char buf[UGEN_BBSIZE];
+	void *ptr;
 	struct usbd_xfer *xfer;
 	usbd_status err;
 	int s;
@@ -547,33 +550,37 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 		break;
 	case UE_BULK:
 		xfer = usbd_alloc_xfer(sc->sc_udev);
-		if (xfer == 0)
+		if (xfer == NULL)
 			return (ENOMEM);
+		if (uio->uio_resid != 0) {
+			ptr = usbd_alloc_buffer(xfer, uio->uio_resid);
+			if (ptr == NULL) {
+				usbd_free_xfer(xfer);
+				return (ENOMEM);
+			}
+		}
 		flags = USBD_SYNCHRONOUS;
 		if (sce->state & UGEN_SHORT_OK)
 			flags |= USBD_SHORT_XFER_OK;
 		if (sce->timeout == 0)
 			flags |= USBD_CATCH;
-		while ((n = min(UGEN_BBSIZE, uio->uio_resid)) != 0) {
-			DPRINTFN(1, ("ugenread: start transfer %d bytes\n",n));
-			usbd_setup_xfer(xfer, sce->pipeh, 0, buf, n,
-			    flags, sce->timeout, NULL);
-			err = usbd_transfer(xfer);
-			if (err) {
+		usbd_setup_xfer(xfer, sce->pipeh, 0, NULL, uio->uio_resid,
+		    flags | USBD_NO_COPY, sce->timeout, NULL);
+		err = usbd_transfer(xfer);
+		if (err) {
+			if (err == USBD_STALLED)
 				usbd_clear_endpoint_stall(sce->pipeh);
-				if (err == USBD_INTERRUPTED)
-					error = EINTR;
-				else if (err == USBD_TIMEOUT)
-					error = ETIMEDOUT;
-				else
-					error = EIO;
-				break;
-			}
+
+			if (err == USBD_INTERRUPTED)
+				error = EINTR;
+			else if (err == USBD_TIMEOUT)
+				error = ETIMEDOUT;
+			else
+				error = EIO;
+		} else {
 			usbd_get_xfer_status(xfer, NULL, NULL, &tn, NULL);
 			DPRINTFN(1, ("ugenread: got %d bytes\n", tn));
-			error = uiomovei(buf, tn, uio);
-			if (error || tn < n)
-				break;
+			error = uiomovei(ptr, tn, uio);
 		}
 		usbd_free_xfer(xfer);
 		break;
@@ -649,6 +656,7 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 	u_int32_t n;
 	int flags, error = 0;
 	char buf[UGEN_BBSIZE];
+	void *ptr;
 	struct usbd_xfer *xfer;
 	usbd_status err;
 
@@ -677,26 +685,35 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 	case UE_BULK:
 		xfer = usbd_alloc_xfer(sc->sc_udev);
-		if (xfer == 0)
-			return (EIO);
-		while ((n = min(UGEN_BBSIZE, uio->uio_resid)) != 0) {
-			error = uiomovei(buf, n, uio);
-			if (error)
-				break;
-			DPRINTFN(1, ("ugenwrite: transfer %d bytes\n", n));
-			usbd_setup_xfer(xfer, sce->pipeh, 0, buf, n,
-			    flags, sce->timeout, NULL);
-			err = usbd_transfer(xfer);
-			if (err) {
-				usbd_clear_endpoint_stall(sce->pipeh);
-				if (err == USBD_INTERRUPTED)
-					error = EINTR;
-				else if (err == USBD_TIMEOUT)
-					error = ETIMEDOUT;
-				else
-					error = EIO;
-				break;
+		if (xfer == NULL)
+			return (ENOMEM);
+		if (uio->uio_resid != 0) {
+			ptr = usbd_alloc_buffer(xfer, uio->uio_resid);
+			if (ptr == NULL) {
+				usbd_free_xfer(xfer);
+				return (ENOMEM);
 			}
+			error = uiomove(ptr, uio->uio_resid, uio);
+			if (error) {
+				usbd_free_xfer(xfer);
+				return (error);
+			}
+		}
+		DPRINTFN(1, ("ugenwrite: transfer %d bytes\n", n));
+		usbd_setup_xfer(xfer, sce->pipeh, 0, NULL,
+uio->uio_resid,
+		    flags | USBD_NO_COPY, sce->timeout, NULL);
+		err = usbd_transfer(xfer);
+		if (err) {
+			if (err == USBD_STALLED)
+				usbd_clear_endpoint_stall(sce->pipeh);
+
+			if (err == USBD_INTERRUPTED)
+				error = EINTR;
+			else if (err == USBD_TIMEOUT)
+				error = ETIMEDOUT;
+			else
+				error = EIO;
 		}
 		usbd_free_xfer(xfer);
 		break;
@@ -1161,10 +1178,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 	{
 		struct usb_ctl_request *ur = (void *)addr;
 		int len = UGETW(ur->ucr_request.wLength);
+		struct usbd_xfer *xfer;
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
 		int error = 0;
+		usbd_status err;
 
 		if (!(flag & FWRITE))
 			return (EPERM);
@@ -1179,6 +1198,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		if (len < 0 || len > 32767)
 			return (EINVAL);
+
+		xfer = usbd_alloc_xfer(sc->sc_udev);
+		if (xfer == NULL)
+			return (USBD_NOMEM);
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;
@@ -1191,33 +1214,97 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				ur->ucr_request.bmRequestType & UT_READ ?
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = malloc(len, M_TEMP, M_WAITOK);
+			ptr = usbd_alloc_buffer(xfer, len);
+			if (ptr == NULL) {
+				error = ENOMEM;
+				goto ret;
+			}
 			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomovei(ptr, len, &uio);
+				error = uiomove(ptr, len, &uio);
 				if (error)
 					goto ret;
 			}
 		}
 		sce = &sc->sc_endpoints[endpt][IN];
-		err = usbd_do_request_flags(sc->sc_udev, &ur->ucr_request,
-			  ptr, ur->ucr_flags, &ur->ucr_actlen, sce->timeout);
-		if (err) {
+
+	#ifdef DIAGNOSTIC
+		if (sc->sc_udev->bus->intr_context) {
+			printf("usbd_do_request: not in process context\n");
+			error = EINVAL;
+			goto ret;
+		}
+	#endif
+
+		/* If the bus is gone, don't go any further. */
+		if (usbd_is_dying(sc->sc_udev)) {
 			error = EIO;
 			goto ret;
 		}
-		/* Only if USBD_SHORT_XFER_OK is set. */
-		if (len > ur->ucr_actlen)
-			len = ur->ucr_actlen;
-		if (len != 0) {
-			if (uio.uio_rw == UIO_READ) {
-				error = uiomovei(ptr, len, &uio);
-				if (error)
-					goto ret;
+		usbd_setup_default_xfer(xfer, sc->sc_udev, 0, sce->timeout, &ur->ucr_request, ptr,
+		    len, ur->ucr_flags | USBD_SYNCHRONOUS, 0);
+
+		err = usbd_transfer(xfer);
+		ur->ucr_actlen = xfer->actlen;
+		if (err) {
+			usbd_free_xfer(xfer);
+			xfer = usbd_alloc_xfer(sc->sc_udev);
+			if (xfer == NULL)
+				return (USBD_NOMEM);
+			if (err == USBD_STALLED) {
+				/*
+				 * The control endpoint has stalled.  Control endpoints
+				 * should not halt, but some may do so anyway so clear
+				 * any halt condition.
+				 */
+				usb_device_request_t treq;
+				usb_status_t status;
+				u_int16_t s;
+				usbd_status nerr;
+
+				treq.bmRequestType = UT_READ_ENDPOINT;
+				treq.bRequest = UR_GET_STATUS;
+				USETW(treq.wValue, 0);
+				USETW(treq.wIndex, 0);
+				USETW(treq.wLength, sizeof(usb_status_t));
+				usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
+				    &treq, &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
+				nerr = usbd_transfer(xfer);
+				if (nerr)
+					goto bad;
+				s = UGETW(status.wStatus);
+				DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
+				if (!(s & UES_HALT))
+					goto bad;
+				treq.bmRequestType = UT_WRITE_ENDPOINT;
+				treq.bRequest = UR_CLEAR_FEATURE;
+				USETW(treq.wValue, UF_ENDPOINT_HALT);
+				USETW(treq.wIndex, 0);
+				USETW(treq.wLength, 0);
+				usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
+				    &treq, &status, 0, USBD_SYNCHRONOUS, 0);
+				nerr = usbd_transfer(xfer);
+				if (nerr)
+					goto bad;
+			}
+			 bad:
+			if (err == USBD_INTERRUPTED) {
+				error = EINTR;
+			} else if (err == USBD_TIMEOUT) {
+				error = ETIMEDOUT;
+			} else {
+				error = EIO;
+			}
+		} else {
+			if (len > ur->ucr_actlen)
+				len = ur->ucr_actlen;
+			if (len != 0) {
+				if (uio.uio_rw == UIO_READ) {
+					error = uiomove(ptr, len, &uio);
+				}
 			}
 		}
 	ret:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
+		usbd_free_xfer(xfer);
 		return (error);
 	}
 	case USB_GET_DEVICEINFO:
