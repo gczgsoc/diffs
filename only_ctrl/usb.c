@@ -611,23 +611,40 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 	{
 		struct usb_ctl_request *ur = (void *)data;
 		int len = UGETW(ur->ucr_request.wLength);
+		struct usbd_xfer *xfer;
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
 		int addr = ur->ucr_addr;
-		usbd_status err;
 		int error = 0;
+		usbd_status err;
 
 		if (!(flag & FWRITE))
 			return (EBADF);
 
 		DPRINTF(("usbioctl: USB_REQUEST addr=%d len=%d\n", addr, len));
-		if (len < 0 || len > 32768)
+
+		/* Avoid requests that would damage the bus integrity. */
+		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->ucr_request.bRequest == UR_SET_ADDRESS) ||
+		    (ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->ucr_request.bRequest == UR_SET_CONFIG) ||
+		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
+		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
 			return (EINVAL);
+
+		if (len < 0 || len > 32767)
+			return (EINVAL);
+
 		if (addr < 0 || addr >= USB_MAX_DEVICES)
 			return (EINVAL);
+
 		if (sc->sc_bus->devices[addr] == NULL)
 			return (ENXIO);
+
+		xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
+		if (xfer == NULL)
+			return (USBD_NOMEM);
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;
@@ -640,33 +657,93 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				ur->ucr_request.bmRequestType & UT_READ ?
 				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = malloc(len, M_TEMP, M_WAITOK);
+			ptr = usbd_alloc_buffer(xfer, len);
+			if (ptr == NULL) {
+				error = ENOMEM;
+				goto ret;
+			}
 			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomovei(ptr, len, &uio);
+				error = uiomove(ptr, len, &uio);
 				if (error)
 					goto ret;
 			}
 		}
-		err = usbd_do_request_flags(sc->sc_bus->devices[addr],
-			  &ur->ucr_request, ptr, ur->ucr_flags,
-			  &ur->ucr_actlen, USBD_DEFAULT_TIMEOUT);
-		if (err) {
+
+	#ifdef DIAGNOSTIC
+		if ((sc->sc_bus->devices[addr])->bus->intr_context) {
+			printf("usb_request: not in process context\n");
+			error = EINVAL;
+			goto ret;
+		}
+	#endif
+
+		/* If the bus is gone, don't go any further. */
+		if (usbd_is_dying(sc->sc_bus->devices[addr])) {
 			error = EIO;
 			goto ret;
 		}
-		/* Only if USBD_SHORT_XFER_OK is set. */
-		if (len > ur->ucr_actlen)
-			len = ur->ucr_actlen;
-		if (len != 0) {
-			if (uio.uio_rw == UIO_READ) {
-				error = uiomovei(ptr, len, &uio);
-				if (error)
-					goto ret;
+		usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &ur->ucr_request, ptr, len, ur->ucr_flags | USBD_SYNCHRONOUS, 0);
+
+		err = usbd_transfer(xfer);
+		ur->ucr_actlen = xfer->actlen;
+		if (err) {
+			usbd_free_xfer(xfer);
+			xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
+			if (xfer == NULL)
+				return (USBD_NOMEM);
+			if (err == USBD_STALLED) {
+				/*
+				 * The control endpoint has stalled.  Control endpoints
+				 * should not halt, but some may do so anyway so clear
+				 * any halt condition.
+				 */
+				usb_device_request_t treq;
+				usb_status_t status;
+				u_int16_t s;
+				usbd_status nerr;
+
+				treq.bmRequestType = UT_READ_ENDPOINT;
+				treq.bRequest = UR_GET_STATUS;
+				USETW(treq.wValue, 0);
+				USETW(treq.wIndex, 0);
+				USETW(treq.wLength, sizeof(usb_status_t));
+				usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq, &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
+				nerr = usbd_transfer(xfer);
+				if (nerr)
+					goto bad;
+				s = UGETW(status.wStatus);
+				DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
+				if (!(s & UES_HALT))
+					goto bad;
+				treq.bmRequestType = UT_WRITE_ENDPOINT;
+				treq.bRequest = UR_CLEAR_FEATURE;
+				USETW(treq.wValue, UF_ENDPOINT_HALT);
+				USETW(treq.wIndex, 0);
+				USETW(treq.wLength, 0);
+				usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq, &status, 0, USBD_SYNCHRONOUS, 0);
+				nerr = usbd_transfer(xfer);
+				if (nerr)
+					goto bad;
+			}
+			 bad:
+			if (err == USBD_INTERRUPTED) {
+				error = EINTR;
+			} else if (err == USBD_TIMEOUT) {
+				error = ETIMEDOUT;
+			} else {
+				error = EIO;
+			}
+		} else {
+			if (len > ur->ucr_actlen)
+				len = ur->ucr_actlen;
+			if (len != 0) {
+				if (uio.uio_rw == UIO_READ) {
+					error = uiomove(ptr, len, &uio);
+				}
 			}
 		}
 	ret:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
+		usbd_free_xfer(xfer);
 		return (error);
 	}
 
