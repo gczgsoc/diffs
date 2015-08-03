@@ -480,7 +480,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 {
 	struct ugen_endpoint *sce = &sc->sc_endpoints[endpt][IN];
 	u_int32_t n, tn;
-	void *ptr;
+	void *ptr = 0;
 	struct usbd_xfer *xfer;
 	usbd_status err;
 	int s;
@@ -553,11 +553,10 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 		if (xfer == NULL)
 			return (ENOMEM);
 		if (uio->uio_resid != 0) {
-			//ptr = usbd_alloc_buffer(xfer, uio->uio_resid);
 			ptr = malloc(uio->uio_resid, M_TEMP, M_WAITOK);
 			if (ptr == NULL) {
-				usbd_free_xfer(xfer);
-				return (ENOMEM);
+				error = ENOMEM;
+				goto end;
 			}
 		}
 		flags = USBD_SYNCHRONOUS;
@@ -578,11 +577,12 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 				error = ETIMEDOUT;
 			else
 				error = EIO;
-		} else {
-			usbd_get_xfer_status(xfer, NULL, NULL, &tn, NULL);
-			DPRINTFN(1, ("ugenread: got %d bytes\n", tn));
-			error = uiomovei(ptr, tn, uio);
+			goto end;
 		}
+		usbd_get_xfer_status(xfer, NULL, NULL, &tn, NULL);
+		DPRINTFN(1, ("ugenread: got %d bytes\n", tn));
+		error = uiomove(ptr, tn, uio);
+	end:
 		if (ptr)
 			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
@@ -659,7 +659,7 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 	u_int32_t n;
 	int flags, error = 0;
 	char buf[UGEN_BBSIZE];
-	void *ptr;
+	void *ptr = 0;
 	int len;
 	struct usbd_xfer *xfer;
 	usbd_status err;
@@ -693,21 +693,18 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			return (ENOMEM);
 		len = uio->uio_resid;
 		if (len != 0) {
-			//ptr = usbd_alloc_buffer(xfer, uio->uio_resid);
 			ptr = malloc(len, M_TEMP, M_WAITOK);
 			if (ptr == NULL) {
-				usbd_free_xfer(xfer);
-				return (ENOMEM);
+				error = ENOMEM;
+				goto done;
 			}
 			error = uiomove(ptr, len, uio);
-			if (error) {
-				free(ptr, M_TEMP, 0);
-				usbd_free_xfer(xfer);
-				return (error);
-			}
+			if (error)
+				goto done;
 		}
 		DPRINTFN(1, ("ugenwrite: transfer %d bytes\n", n));
-		usbd_setup_xfer(xfer, sce->pipeh, 0, ptr, len, flags, sce->timeout, NULL);
+		usbd_setup_xfer(xfer, sce->pipeh, 0, ptr,
+		    len, flags, sce->timeout, NULL);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED)
@@ -720,6 +717,7 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			else
 				error = EIO;
 		}
+	done:
 		if (ptr)
 			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
@@ -1218,10 +1216,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			uio.uio_offset = 0;
 			uio.uio_segflg = UIO_USERSPACE;
 			uio.uio_rw =
-				ur->ucr_request.bmRequestType & UT_READ ?
-				UIO_READ : UIO_WRITE;
+			    ur->ucr_request.bmRequestType & UT_READ ?
+			    UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			//ptr = usbd_alloc_buffer(xfer, len);
 			ptr = malloc(len, M_TEMP, M_WAITOK);
 			if (ptr == NULL) {
 				error = ENOMEM;
@@ -1248,17 +1245,19 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			error = EIO;
 			goto ret;
 		}
-		usbd_setup_default_xfer(xfer, sc->sc_udev, 0, sce->timeout, &ur->ucr_request, ptr,
-		    len, ur->ucr_flags | USBD_SYNCHRONOUS, 0);
-
+		usbd_setup_default_xfer(xfer, sc->sc_udev,
+		    0, sce->timeout, &ur->ucr_request, ptr, len,
+		    ur->ucr_flags | USBD_SYNCHRONOUS, 0);
 		err = usbd_transfer(xfer);
-		ur->ucr_actlen = xfer->actlen;
 		if (err) {
-			usbd_free_xfer(xfer);
-			xfer = usbd_alloc_xfer(sc->sc_udev);
-			if (xfer == NULL)
-				return (USBD_NOMEM);
 			if (err == USBD_STALLED) {
+				usbd_free_xfer(xfer);
+				if (ptr)
+					free(ptr, M_TEMP, 0);
+				ptr = NULL;
+				xfer = usbd_alloc_xfer(sc->sc_udev);
+				if (xfer == NULL)
+					return (USBD_NOMEM);
 				/*
 				 * The control endpoint has stalled.  Control endpoints
 				 * should not halt, but some may do so anyway so clear
@@ -1291,26 +1290,21 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
 				    &treq, &status, 0, USBD_SYNCHRONOUS, 0);
 				nerr = usbd_transfer(xfer);
-				if (nerr)
-					goto bad;
 			}
-			 bad:
-			if (err == USBD_INTERRUPTED) {
+		bad:
+			if (err == USBD_INTERRUPTED)
 				error = EINTR;
-			} else if (err == USBD_TIMEOUT) {
+			else if (err == USBD_TIMEOUT)
 				error = ETIMEDOUT;
-			} else {
+			else
 				error = EIO;
-			}
-		} else {
-			if (len > ur->ucr_actlen)
-				len = ur->ucr_actlen;
-			if (len != 0) {
-				if (uio.uio_rw == UIO_READ) {
-					error = uiomove(ptr, len, &uio);
-				}
-			}
+			goto ret;
 		}
+		ur->ucr_actlen = xfer->actlen;
+		if (len > ur->ucr_actlen)
+			len = ur->ucr_actlen;
+		if ((len != 0) && (uio.uio_rw == UIO_READ))
+			error = uiomove(ptr, len, &uio);
 	ret:
 		if (ptr)
 			free(ptr, M_TEMP, 0);
