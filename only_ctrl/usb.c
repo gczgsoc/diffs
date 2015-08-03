@@ -654,10 +654,10 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			uio.uio_offset = 0;
 			uio.uio_segflg = UIO_USERSPACE;
 			uio.uio_rw =
-				ur->ucr_request.bmRequestType & UT_READ ?
-				UIO_READ : UIO_WRITE;
+			    ur->ucr_request.bmRequestType & UT_READ ?
+			    UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = usbd_alloc_buffer(xfer, len);
+			ptr = malloc(len, M_TEMP, M_WAITOK);
 			if (ptr == NULL) {
 				error = ENOMEM;
 				goto ret;
@@ -682,16 +682,21 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			error = EIO;
 			goto ret;
 		}
-		usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &ur->ucr_request, ptr, len, ur->ucr_flags | USBD_SYNCHRONOUS, 0);
-
+		usbd_setup_default_xfer(xfer,
+		    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT,
+		    &ur->ucr_request, ptr, len, ur->ucr_flags |
+		    USBD_SYNCHRONOUS, 0);
 		err = usbd_transfer(xfer);
 		ur->ucr_actlen = xfer->actlen;
 		if (err) {
-			usbd_free_xfer(xfer);
-			xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
-			if (xfer == NULL)
-				return (USBD_NOMEM);
 			if (err == USBD_STALLED) {
+				usbd_free_xfer(xfer);
+				if (ptr)
+					free(ptr, M_TEMP, 0);
+				ptr = NULL;
+				xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
+				if (xfer == NULL)
+					return (USBD_NOMEM);
 				/*
 				 * The control endpoint has stalled.  Control endpoints
 				 * should not halt, but some may do so anyway so clear
@@ -707,7 +712,9 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				USETW(treq.wValue, 0);
 				USETW(treq.wIndex, 0);
 				USETW(treq.wLength, sizeof(usb_status_t));
-				usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq, &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
+				usbd_setup_default_xfer(xfer,
+				    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq,
+				    &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
 				nerr = usbd_transfer(xfer);
 				if (nerr)
 					goto bad;
@@ -720,29 +727,27 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				USETW(treq.wValue, UF_ENDPOINT_HALT);
 				USETW(treq.wIndex, 0);
 				USETW(treq.wLength, 0);
-				usbd_setup_default_xfer(xfer, sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq, &status, 0, USBD_SYNCHRONOUS, 0);
+				usbd_setup_default_xfer(xfer,
+				    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq,
+				    &status, 0, USBD_SYNCHRONOUS, 0);
 				nerr = usbd_transfer(xfer);
-				if (nerr)
-					goto bad;
 			}
-			 bad:
-			if (err == USBD_INTERRUPTED) {
+		bad:
+			if (err == USBD_INTERRUPTED)
 				error = EINTR;
-			} else if (err == USBD_TIMEOUT) {
+			else if (err == USBD_TIMEOUT)
 				error = ETIMEDOUT;
-			} else {
+			else
 				error = EIO;
-			}
-		} else {
-			if (len > ur->ucr_actlen)
-				len = ur->ucr_actlen;
-			if (len != 0) {
-				if (uio.uio_rw == UIO_READ) {
-					error = uiomove(ptr, len, &uio);
-				}
-			}
+			goto ret;
 		}
+		if (len > ur->ucr_actlen)
+			len = ur->ucr_actlen;
+		if ((len != 0) && (uio.uio_rw == UIO_READ))
+			error = uiomove(ptr, len, &uio);
 	ret:
+		if (ptr)
+			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
 		return (error);
 	}
