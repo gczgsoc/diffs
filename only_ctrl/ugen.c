@@ -549,7 +549,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			return (ENOMEM);
 		len = uio->uio_resid;
 		if (len != 0) {
-			ptr = malloc(len, M_TEMP, M_WAITOK);
+			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
 				error = ENOMEM;
 				goto end;
@@ -560,8 +560,8 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			flags |= USBD_SHORT_XFER_OK;
 		if (sce->timeout == 0)
 			flags |= USBD_CATCH;
-		usbd_setup_xfer(xfer, sce->pipeh, 0, ptr, len,
-		    flags, sce->timeout, NULL);
+		usbd_setup_xfer(xfer, sce->pipeh, 0, NULL, len,
+		    flags | USBD_NO_COPY, sce->timeout, NULL);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED)
@@ -579,8 +579,6 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 		DPRINTFN(1, ("ugenread: got %d bytes\n", tn));
 		error = uiomove(ptr, tn, uio);
 	end:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
 		break;
 	case UE_ISOCHRONOUS:
