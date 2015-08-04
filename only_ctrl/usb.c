@@ -657,7 +657,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			    ur->ucr_request.bmRequestType & UT_READ ?
 			    UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = malloc(len, M_TEMP, M_WAITOK);
+			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
 				error = ENOMEM;
 				goto ret;
@@ -684,13 +684,12 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		}
 		usbd_setup_default_xfer(xfer,
 		    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT,
-		    &ur->ucr_request, ptr, len, ur->ucr_flags |
-		    USBD_SYNCHRONOUS, 0);
+		    &ur->ucr_request, NULL, len, ur->ucr_flags |
+		    USBD_SYNCHRONOUS | USBD_NO_COPY, 0);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED) {
-				if (ptr)
-					free(ptr, M_TEMP, 0);
+				usbd_free_buffer(xfer);
 				ptr = NULL;
 				error = EIO;
 				/*
@@ -744,8 +743,6 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		if ((len != 0) && (uio.uio_rw == UIO_READ))
 			error = uiomove(ptr, len, &uio);
 	ret:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
 		return (error);
 	}
