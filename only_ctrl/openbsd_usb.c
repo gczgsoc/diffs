@@ -651,6 +651,9 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 		req.ucr_flags = USBD_SHORT_XFER_OK;
 
+	req.ucr_context = itransfer;
+	req.ucr_timeout = transfer->timeout;
+
 	if (dpriv->devname == NULL) {
 		/*
 		 * XXX If the device is not attached to ugen(4) it is
@@ -669,9 +672,6 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 		}
 		close(fd);
 	} else {
-		if ((ioctl(dpriv->fd, USB_SET_TIMEOUT, &transfer->timeout)) < 0)
-			return _errno_to_libusb(errno);
-
 		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
 			return _errno_to_libusb(errno);
 	}
