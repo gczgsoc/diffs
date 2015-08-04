@@ -687,16 +687,12 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		    &ur->ucr_request, ptr, len, ur->ucr_flags |
 		    USBD_SYNCHRONOUS, 0);
 		err = usbd_transfer(xfer);
-		ur->ucr_actlen = xfer->actlen;
 		if (err) {
 			if (err == USBD_STALLED) {
-				usbd_free_xfer(xfer);
 				if (ptr)
 					free(ptr, M_TEMP, 0);
 				ptr = NULL;
-				xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
-				if (xfer == NULL)
-					return (USBD_NOMEM);
+				error = EIO;
 				/*
 				 * The control endpoint has stalled.  Control endpoints
 				 * should not halt, but some may do so anyway so clear
@@ -717,11 +713,11 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				    &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
 				nerr = usbd_transfer(xfer);
 				if (nerr)
-					goto bad;
+					goto ret;
 				s = UGETW(status.wStatus);
 				DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
 				if (!(s & UES_HALT))
-					goto bad;
+					goto ret;
 				treq.bmRequestType = UT_WRITE_ENDPOINT;
 				treq.bRequest = UR_CLEAR_FEATURE;
 				USETW(treq.wValue, UF_ENDPOINT_HALT);
@@ -730,9 +726,10 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				usbd_setup_default_xfer(xfer,
 				    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq,
 				    &status, 0, USBD_SYNCHRONOUS, 0);
-				nerr = usbd_transfer(xfer);
+				usbd_transfer(xfer);
+				goto ret;
 			}
-		bad:
+
 			if (err == USBD_INTERRUPTED)
 				error = EINTR;
 			else if (err == USBD_TIMEOUT)
@@ -741,6 +738,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				error = EIO;
 			goto ret;
 		}
+		ur->ucr_actlen = xfer->actlen;
 		if (len > ur->ucr_actlen)
 			len = ur->ucr_actlen;
 		if ((len != 0) && (uio.uio_rw == UIO_READ))
