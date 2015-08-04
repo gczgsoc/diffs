@@ -475,6 +475,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 	struct ugen_endpoint *sce = &sc->sc_endpoints[endpt][IN];
 	u_int32_t n, tn;
 	void *ptr = 0;
+	int len;
 	struct usbd_xfer *xfer;
 	usbd_status err;
 	int s;
@@ -546,8 +547,9 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 		if (xfer == NULL)
 			return (ENOMEM);
-		if (uio->uio_resid != 0) {
-			ptr = malloc(uio->uio_resid, M_TEMP, M_WAITOK);
+		len = uio->uio_resid;
+		if (len != 0) {
+			ptr = malloc(len, M_TEMP, M_WAITOK);
 			if (ptr == NULL) {
 				error = ENOMEM;
 				goto end;
@@ -558,7 +560,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			flags |= USBD_SHORT_XFER_OK;
 		if (sce->timeout == 0)
 			flags |= USBD_CATCH;
-		usbd_setup_xfer(xfer, sce->pipeh, 0, ptr, uio->uio_resid,
+		usbd_setup_xfer(xfer, sce->pipeh, 0, ptr, len,
 		    flags, sce->timeout, NULL);
 		err = usbd_transfer(xfer);
 		if (err) {
@@ -1238,13 +1240,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED) {
-				usbd_free_xfer(xfer);
 				if (ptr)
 					free(ptr, M_TEMP, 0);
 				ptr = NULL;
-				xfer = usbd_alloc_xfer(sc->sc_udev);
-				if (xfer == NULL)
-					return (USBD_NOMEM);
+				error = EIO;
 				/*
 				 * The control endpoint has stalled.  Control endpoints
 				 * should not halt, but some may do so anyway so clear
@@ -1264,11 +1263,11 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				    &treq, &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
 				nerr = usbd_transfer(xfer);
 				if (nerr)
-					goto bad;
+					goto ret;
 				s = UGETW(status.wStatus);
 				DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
 				if (!(s & UES_HALT))
-					goto bad;
+					goto ret;
 				treq.bmRequestType = UT_WRITE_ENDPOINT;
 				treq.bRequest = UR_CLEAR_FEATURE;
 				USETW(treq.wValue, UF_ENDPOINT_HALT);
@@ -1276,9 +1275,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				USETW(treq.wLength, 0);
 				usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
 				    &treq, &status, 0, USBD_SYNCHRONOUS, 0);
-				nerr = usbd_transfer(xfer);
+				usbd_transfer(xfer);
+				goto ret;
 			}
-		bad:
+
 			if (err == USBD_INTERRUPTED)
 				error = EINTR;
 			else if (err == USBD_TIMEOUT)
