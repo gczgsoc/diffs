@@ -1208,7 +1208,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			    ur->ucr_request.bmRequestType & UT_READ ?
 			    UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
-			ptr = malloc(len, M_TEMP, M_WAITOK);
+			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
 				error = ENOMEM;
 				goto ret;
@@ -1235,13 +1235,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			goto ret;
 		}
 		usbd_setup_default_xfer(xfer, sc->sc_udev,
-		    0, sce->timeout, &ur->ucr_request, ptr, len,
-		    ur->ucr_flags | USBD_SYNCHRONOUS, 0);
+		    0, sce->timeout, &ur->ucr_request, NULL, len,
+		    ur->ucr_flags | USBD_SYNCHRONOUS | USBD_NO_COPY, 0);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED) {
-				if (ptr)
-					free(ptr, M_TEMP, 0);
+				usbd_free_buffer(xfer);
 				ptr = NULL;
 				error = EIO;
 				/*
@@ -1293,8 +1292,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		if ((len != 0) && (uio.uio_rw == UIO_READ))
 			error = uiomove(ptr, len, &uio);
 	ret:
-		if (ptr)
-			free(ptr, M_TEMP, 0);
 		usbd_free_xfer(xfer);
 		return (error);
 	}
