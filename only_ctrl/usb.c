@@ -616,8 +616,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		struct uio uio;
 		void *ptr = 0;
 		int addr = ur->ucr_addr;
-		int error = 0;
 		usbd_status err;
+		int error = 0;
 
 		if (!(flag & FWRITE))
 			return (EBADF);
