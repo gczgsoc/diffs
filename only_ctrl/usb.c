@@ -615,6 +615,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
+		int flags;
 		int addr = ur->ucr_addr;
 		usbd_status err;
 		int error = 0;
@@ -682,10 +683,10 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			error = EIO;
 			goto ret;
 		}
+		flags = ur->ucr_flags | USBD_SYNCHRONOUS | USBD_NO_COPY;
 		usbd_setup_default_xfer(xfer,
-		    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT,
-		    &ur->ucr_request, NULL, len, ur->ucr_flags |
-		    USBD_SYNCHRONOUS | USBD_NO_COPY, 0);
+		    sc->sc_bus->devices[addr], 0, ur->ucr_timeout,
+		    &ur->ucr_request, NULL, len, flags, 0);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED) {
