@@ -1172,6 +1172,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
+		int flags;
 		int error = 0;
 		usbd_status err;
 
@@ -1230,9 +1231,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			error = EIO;
 			goto ret;
 		}
+		flags = ur->ucr_flags | USBD_SYNCHRONOUS | USBD_NO_COPY;
 		usbd_setup_default_xfer(xfer, sc->sc_udev,
-		    0, sce->timeout, &ur->ucr_request, NULL, len,
-		    ur->ucr_flags | USBD_SYNCHRONOUS | USBD_NO_COPY, 0);
+		    0, ur->ucr_timeout, &ur->ucr_request, NULL, len,
+		    flags, 0);
 		err = usbd_transfer(xfer);
 		if (err) {
 			if (err == USBD_STALLED) {
