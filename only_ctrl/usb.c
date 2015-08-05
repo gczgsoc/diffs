@@ -645,7 +645,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 
 		xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
 		if (xfer == NULL)
-			return (USBD_NOMEM);
+			return (ENOMEM);
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;

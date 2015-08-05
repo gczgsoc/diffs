@@ -1192,7 +1192,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 		if (xfer == NULL)
-			return (USBD_NOMEM);
+			return (ENOMEM);
 		if (len != 0) {
 			iov.iov_base = (caddr_t)ur->ucr_data;
 			iov.iov_len = len;
