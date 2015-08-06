@@ -139,9 +139,12 @@ const struct cfattach ugen_ca = {
 	sizeof(struct ugen_softc), ugen_match, ugen_attach, ugen_detach
 };
 
-void ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
+void
+ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
+{
 	struct usb_ctl_request *ur = priv;
 	struct ugen_endpoint *sce = (struct ugen_endpoint *)ur->ucr_sce;
+
 	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
 	selwakeup(&sce->rsel);
 }
@@ -432,7 +435,6 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 	struct ugen_endpoint *sce;
 	struct usb_ctl_request *ur;
 	int dir, i;
-	int s;
 
 #ifdef DIAGNOSTIC
 	if (!sc->sc_is_open[endpt]) {
@@ -440,14 +442,6 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 		return (EINVAL);
 	}
 #endif
-
-	s = splusb();
-	while ((ur = TAILQ_FIRST(&complete_queue_head))) {
-		TAILQ_REMOVE(&complete_queue_head, ur, entries);
-		usbd_free_xfer(ur->xfer);
-		free(ur, M_TEMP, sizeof(*ur));
-	}
-	splx(s);
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
 		DPRINTFN(5, ("ugenclose: close control\n"));
@@ -486,6 +480,12 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 		}
 	}
 	sc->sc_is_open[endpt] = 0;
+
+	while ((ur = TAILQ_FIRST(&complete_queue_head))) {
+		TAILQ_REMOVE(&complete_queue_head, ur, entries);
+		usbd_free_xfer(ur->xfer);
+		free(ur, M_TEMP, sizeof(*ur));
+	}
 
 	return (0);
 }
