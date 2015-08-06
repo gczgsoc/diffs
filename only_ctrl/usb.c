@@ -814,7 +814,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 					UIO_READ : UIO_WRITE;
 				uio.uio_procp = p;
 				if (uio.uio_rw == UIO_READ) {
-					error = uiomove(KERNADDR(&xfer->dmabuf, 0), len, &uio);
+					error = uiomovei(KERNADDR(&xfer->dmabuf, 0), len, &uio);
 					if (error) {
 						kur->ucr_status = USBD_IOERROR;
 					}
