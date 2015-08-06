@@ -112,7 +112,8 @@ static int usb_run_tasks, usb_run_abort_tasks;
 int explore_pending;
 const char *usbrev_str[] = USBREV_STR;
 
-static TAILQ_HEAD(, usb_ctl_request) complete_queue_head = TAILQ_HEAD_INITIALIZER(complete_queue_head);
+static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
+    TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void usb_async_callback(struct usbd_xfer *, void *, usbd_status);
 void		 usb_explore(void *);
@@ -652,7 +653,6 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
-		int flags;
 		int addr = ur->ucr_addr;
 		usbd_status err;
 		int error = 0;
@@ -661,8 +661,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			return (EBADF);
 
 		DPRINTF(("usbioctl: USB_REQUEST addr=%d len=%d\n", addr, len));
-
-		/* Avoid requests that would damage the bus integrity. */
+		if (len < 0 || len > 32767)
+			return (EINVAL);
 		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
 		     ur->ucr_request.bRequest == UR_SET_ADDRESS) ||
 		    (ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
@@ -670,16 +670,14 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		    (ur->ucr_request.bmRequestType == UT_WRITE_INTERFACE &&
 		     ur->ucr_request.bRequest == UR_SET_INTERFACE))
 			return (EINVAL);
-
-		if (len < 0 || len > 32767)
-			return (EINVAL);
-
 		if (addr < 0 || addr >= USB_MAX_DEVICES)
 			return (EINVAL);
-
 		if (sc->sc_bus->devices[addr] == NULL)
 			return (ENXIO);
-
+		if (usbd_is_dying(sc->sc_bus->devices[addr])) {
+			usbd_free_xfer(xfer);
+			return (EIO);
+		}
 		xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
 		if (xfer == NULL)
 			return (ENOMEM);
@@ -692,8 +690,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			uio.uio_offset = 0;
 			uio.uio_segflg = UIO_USERSPACE;
 			uio.uio_rw =
-			    ur->ucr_request.bmRequestType & UT_READ ?
-			    UIO_READ : UIO_WRITE;
+				ur->ucr_request.bmRequestType & UT_READ ?
+				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
 			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
@@ -701,7 +699,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				return (ENOMEM);
 			}
 			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomove(ptr, len, &uio);
+				error = uiomovei(ptr, len, &uio);
 				if (error) {
 					usbd_free_xfer(xfer);
 					return (error);
@@ -709,20 +707,6 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			}
 		}
 		ur->ucr_sce = sc;
-
-	#ifdef DIAGNOSTIC
-		if ((sc->sc_bus->devices[addr])->bus->intr_context) {
-			printf("usb_request: not in process context\n");
-			usbd_free_xfer(xfer);
-			return (EINVAL);
-		}
-	#endif
-
-		/* If the bus is gone, don't go any further. */
-		if (usbd_is_dying(sc->sc_bus->devices[addr])) {
-			usbd_free_xfer(xfer);
-			return (EIO);
-		}
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {
 			usbd_free_xfer(xfer);
@@ -730,10 +714,10 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		}
 		*kur = *ur;
 		kur->xfer = xfer;
-		flags = ur->ucr_flags | USBD_NO_COPY;
 		usbd_setup_default_xfer(xfer,
 		    sc->sc_bus->devices[addr], kur, ur->ucr_timeout,
-		    &ur->ucr_request, NULL, len, flags, usb_async_callback);
+		    &ur->ucr_request, NULL, len,
+		    ur->ucr_flags | USBD_NO_COPY, usb_async_callback);
 		err = usbd_transfer(xfer);
 		if (err != USBD_IN_PROGRESS) {
 			if (err == USBD_STALLED) {
