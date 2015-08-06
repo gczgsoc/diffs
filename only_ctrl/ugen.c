@@ -108,7 +108,7 @@ struct ugen_softc {
 	u_char sc_secondary;
 };
 
-TAILQ_HEAD(, usb_ctl_request) complete_queue_head = TAILQ_HEAD_INITIALIZER(complete_queue_head);
+static TAILQ_HEAD(, usb_ctl_request) complete_queue_head = TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void ugen_async_callback(struct usbd_xfer *, void *, usbd_status);
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
