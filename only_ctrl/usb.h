@@ -640,8 +640,11 @@ struct usb_ctl_request {
 	usb_device_request_t ucr_request;
 	void	*ucr_data;
 	int	ucr_flags;
+#define USBD_NO_COPY		0x01	/* do not copy data to DMA buffer */
+#define USBD_SYNCHRONOUS	0x02	/* wait for completion */
 #define USBD_SHORT_XFER_OK	0x04	/* allow short reads */
 #define USBD_FORCE_SHORT_XFER	0x08	/* force last short packet on write */
+#define USBD_CATCH		0x10	/* catch signals while sleeping */
 	int	ucr_actlen;		/* actual length transferred */
 	int 	ucr_timeout;
 	int 	ucr_status;

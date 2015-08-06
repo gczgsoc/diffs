@@ -74,13 +74,6 @@ typedef void (*usbd_callback)(struct usbd_xfer *, void *, usbd_status);
 /* Use default (specified by ep. desc.) interval on interrupt pipe */
 #define USBD_DEFAULT_INTERVAL	(-1)
 
-/* Request flags */
-#define USBD_NO_COPY		0x01	/* do not copy data to DMA buffer */
-#define USBD_SYNCHRONOUS	0x02	/* wait for completion */
-/* in usb.h #define USBD_SHORT_XFER_OK	0x04*/	/* allow short reads */
-/* in usb.h #define USBD_FORCE_SHORT_XFER	0x08*/	/* force last short packet on write */
-#define USBD_CATCH		0x10	/* catch signals while sleeping */
-
 #define USBD_NO_TIMEOUT 0
 #define USBD_DEFAULT_TIMEOUT 5000 /* ms = 5 s */
 
