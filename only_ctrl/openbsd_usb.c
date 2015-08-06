@@ -263,6 +263,10 @@ obsd_open(struct libusb_device_handle *handle)
 
 		usbi_add_pollfd(HANDLE_CTX(handle), dpriv->fd, POLLIN | POLLRDNORM);
 		usbi_dbg("open %s: fd %d", devnode, dpriv->fd);
+	} else {
+		if ((dpriv->fd = _bus_open(handle->dev->bus_number)) < 0)
+			return _errno_to_libusb(errno);
+		usbi_add_pollfd(HANDLE_CTX(handle), dpriv->fd, POLLIN | POLLRDNORM);
 	}
 
 	return (LIBUSB_SUCCESS);
@@ -277,6 +281,10 @@ obsd_close(struct libusb_device_handle *handle)
 	if (dpriv->devname) {
 		usbi_dbg("close: fd %d", dpriv->fd);
 
+		usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
+		close(dpriv->fd);
+		dpriv->fd = -1;
+	} else {
 		usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 		close(dpriv->fd);
 		dpriv->fd = -1;
@@ -515,8 +523,6 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 
 	if (transfer->type != LIBUSB_TRANSFER_TYPE_CONTROL)
 		usbi_signal_transfer_completion(itransfer);
-	else if (dpriv->devname == NULL)
-		usbi_signal_transfer_completion(itransfer);
 
 	return (LIBUSB_SUCCESS);
 }
@@ -590,9 +596,16 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 
 		while (1) {
 repeat:
-			if (ioctl(fd, USB_GET_COMPLETED, &req)) {
-				err = 0;
-				break;
+			if (dpriv->devname == NULL) {
+				if (ioctl(fd, USB_COMPLETED, &req)) {
+					err = 0;
+					break;
+				}
+			} else {
+				if (ioctl(fd, USB_GET_COMPLETED, &req)) {
+					err = 0;
+					break;
+				}
 			}
 			itransfer = req.ucr_context;
 
@@ -744,6 +757,7 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	struct libusb_control_setup *setup;
 	struct device_priv *dpriv;
 	struct usb_ctl_request req;
+	int err;
 
 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
@@ -771,31 +785,16 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	req.ucr_timeout = transfer->timeout;
 
 	if (dpriv->devname == NULL) {
-		/*
-		 * XXX If the device is not attached to ugen(4) it is
-		 * XXX still possible to submit a control transfer but
-		 * XXX with the default timeout only.
-		 */
-		int fd, err;
-
-		if ((fd = _bus_open(transfer->dev_handle->dev->bus_number)) < 0)
-			return _errno_to_libusb(errno);
-
-		if ((ioctl(fd, USB_REQUEST, &req)) < 0) {
+		if ((ioctl(dpriv->fd, USB_REQUEST, &req)) < 0) {
 			err = errno;
-			close(fd);
 			return _errno_to_libusb(err);
 		}
-		close(fd);
 	} else {
-		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0)
+		if ((ioctl(dpriv->fd, USB_DO_REQUEST, &req)) < 0) {
+			err = errno;
 			return _errno_to_libusb(errno);
-		return (0);
+		}
 	}
-
-	itransfer->transferred = req.ucr_actlen;
-
-	usbi_dbg("transferred %d", itransfer->transferred);
 
 	return (0);
 }
