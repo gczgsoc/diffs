@@ -1254,8 +1254,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EIO);
 		}
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
-		if (kur == NULL)
+		if (kur == NULL) {
+			usbd_free_xfer(xfer);
 			return (ENOMEM);
+		}
 		*kur = *ur;
 		kur->xfer = xfer;
 		flags = ur->ucr_flags | USBD_NO_COPY;
