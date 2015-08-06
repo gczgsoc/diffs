@@ -1194,7 +1194,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct iovec iov;
 		struct uio uio;
 		void *ptr = 0;
-		int flags;
 		int error = 0;
 		usbd_status err;
 
@@ -1210,6 +1209,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EINVAL);
 		if (len < 0 || len > 32767)
 			return (EINVAL);
+		if (usbd_is_dying(sc->sc_udev))
+			return (EIO);
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 		if (xfer == NULL)
 			return (ENOMEM);
@@ -1222,8 +1223,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			uio.uio_offset = 0;
 			uio.uio_segflg = UIO_USERSPACE;
 			uio.uio_rw =
-			    ur->ucr_request.bmRequestType & UT_READ ?
-			    UIO_READ : UIO_WRITE;
+				ur->ucr_request.bmRequestType & UT_READ ?
+				UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
 			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
@@ -1240,20 +1241,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		}
 		sce = &sc->sc_endpoints[endpt][IN];
 		ur->ucr_sce = sce;
-
-	#ifdef DIAGNOSTIC
-		if (sc->sc_udev->bus->intr_context) {
-			printf("usbd_do_request: not in process context\n");
-			usbd_free_xfer(xfer);
-			return (EINVAL);
-		}
-	#endif
-
-		/* If the bus is gone, don't go any further. */
-		if (usbd_is_dying(sc->sc_udev)) {
-			usbd_free_xfer(xfer);
-			return (EIO);
-		}
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {
 			usbd_free_xfer(xfer);
@@ -1261,10 +1248,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		}
 		*kur = *ur;
 		kur->xfer = xfer;
-		flags = ur->ucr_flags | USBD_NO_COPY;
 		usbd_setup_default_xfer(xfer, sc->sc_udev,
 		    kur, ur->ucr_timeout, &ur->ucr_request, NULL, len,
-		    flags, ugen_async_callback);
+		    ur->ucr_flags | USBD_NO_COPY, ugen_async_callback);
 		err = usbd_transfer(xfer);
 		if (err != USBD_IN_PROGRESS) {
 			free(kur, M_TEMP, sizeof(*kur));
