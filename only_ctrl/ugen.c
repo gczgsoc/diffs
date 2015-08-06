@@ -108,7 +108,8 @@ struct ugen_softc {
 	u_char sc_secondary;
 };
 
-static TAILQ_HEAD(, usb_ctl_request) complete_queue_head = TAILQ_HEAD_INITIALIZER(complete_queue_head);
+static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
+    TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void ugen_async_callback(struct usbd_xfer *, void *, usbd_status);
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
@@ -597,7 +598,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 		}
 		usbd_get_xfer_status(xfer, NULL, NULL, &tn, NULL);
 		DPRINTFN(1, ("ugenread: got %d bytes\n", tn));
-		error = uiomove(ptr, tn, uio);
+		error = uiomovei(ptr, tn, uio);
 	end:
 		usbd_free_xfer(xfer);
 		break;
@@ -712,7 +713,7 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 				error = ENOMEM;
 				goto done;
 			}
-			error = uiomove(ptr, len, uio);
+			error = uiomovei(ptr, len, uio);
 			if (error)
 				goto done;
 		}
@@ -1230,7 +1231,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				return (ENOMEM);
 			}
 			if (uio.uio_rw == UIO_WRITE) {
-				error = uiomove(ptr, len, &uio);
+				error = uiomovei(ptr, len, &uio);
 				if (error) {
 					usbd_free_xfer(xfer);
 					return (error);
@@ -1359,7 +1360,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 					UIO_READ : UIO_WRITE;
 				uio.uio_procp = p;
 				if (uio.uio_rw == UIO_READ) {
-					error = uiomove(KERNADDR(&xfer->dmabuf, 0), len, &uio);
+					error = uiomovei(KERNADDR(&xfer->dmabuf, 0), len, &uio);
 					if (error) {
 						kur->ucr_status = USBD_IOERROR;
 					}
