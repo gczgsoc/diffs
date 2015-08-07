@@ -530,9 +530,31 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 int
 obsd_cancel_transfer(struct usbi_transfer *itransfer)
 {
+	struct libusb_transfer *transfer;
+	struct usb_ctl_request req;
+	struct handle_priv *hpriv;
+	struct device_priv *dpriv;
+	int err = 0;
+
 	usbi_dbg("");
 
-	return (LIBUSB_ERROR_NOT_SUPPORTED);
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	hpriv = (struct handle_priv *)transfer->dev_handle->os_priv;
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (transfer->type != LIBUSB_TRANSFER_TYPE_CONTROL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	req.ucr_context = itransfer;
+	if (ioctl(dpriv->fd, USB_CANCEL, &req)) {
+		usbi_dbg("transfer not found");
+		return _errno_to_libusb(errno);
+	}
+
+	return (LIBUSB_SUCCESS);
 }
 
 void

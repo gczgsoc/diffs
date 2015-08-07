@@ -108,6 +108,8 @@ struct ugen_softc {
 	u_char sc_secondary;
 };
 
+static TAILQ_HEAD(, usb_ctl_request) submit_queue_head =
+    TAILQ_HEAD_INITIALIZER(submit_queue_head);
 static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
     TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
@@ -145,6 +147,8 @@ ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	struct usb_ctl_request *ur = priv;
 	struct ugen_endpoint *sce = (struct ugen_endpoint *)ur->ucr_sce;
 
+	ur->ucr_status = xfer->status;
+	TAILQ_REMOVE(&submit_queue_head, ur, entries);
 	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
 	selwakeup(&sce->rsel);
 }
@@ -1193,9 +1197,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct usbd_xfer *xfer;
 		struct iovec iov;
 		struct uio uio;
+		usbd_status err;
 		void *ptr = 0;
 		int error = 0;
-		usbd_status err;
+		int s;
 
 		if (!(flag & FWRITE))
 			return (EPERM);
@@ -1251,8 +1256,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		usbd_setup_default_xfer(xfer, sc->sc_udev,
 		    kur, ur->ucr_timeout, &ur->ucr_request, NULL, len,
 		    ur->ucr_flags | USBD_NO_COPY, ugen_async_callback);
+		s = splusb();
 		err = usbd_transfer(xfer);
 		if (err != USBD_IN_PROGRESS) {
+			splx(s);
 			free(kur, M_TEMP, sizeof(*kur));
 			if (err == USBD_STALLED) {
 				usbd_free_buffer(xfer);
@@ -1303,6 +1310,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			usbd_free_xfer(xfer);
 			return (error);
 		}
+		TAILQ_INSERT_TAIL(&submit_queue_head, kur, entries);
+		splx(s);
 		return (error);
 	}
 	case USB_GET_COMPLETED:
@@ -1327,8 +1336,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		splx(s);
 
 		xfer = kur->xfer;
-		kur->ucr_status = xfer->status;
-		if (xfer->status == USBD_NORMAL_COMPLETION) {
+		if (kur->ucr_status == USBD_NORMAL_COMPLETION) {
 			len = UGETW(kur->ucr_request.wLength);
 			if (len > xfer->actlen)
 				len = xfer->actlen;
@@ -1357,6 +1365,42 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		*ur = *kur;
 		free(kur, M_TEMP, sizeof(*kur));
+		return (0);
+	}
+	case USB_CANCEL:
+	{
+		struct usb_ctl_request *ur = (void *)addr;
+		struct usb_ctl_request *kur;
+		struct usb_ctl_request *np;
+		int s;
+
+		sce = &sc->sc_endpoints[endpt][IN];
+
+		s = splusb();
+		kur = NULL;
+		TAILQ_FOREACH(np, &submit_queue_head, entries) {
+			if (np->ucr_context == ur->ucr_context) {
+				kur = np;
+				break;
+			}
+		}
+		if (kur == NULL) {
+			TAILQ_FOREACH(np, &complete_queue_head, entries) {
+				if (np->ucr_context == ur->ucr_context) {
+					kur = np;
+					break;
+				}
+			}
+			if (kur == NULL) {
+				splx(s);
+				return (EINVAL);
+			} else {
+				kur->ucr_status = USBD_CANCELLED;
+			}
+		} else {
+			usbd_abort_transfer(kur->xfer);
+		}
+		splx(s);
 		return (0);
 	}
 	case USB_GET_DEVICEINFO:
