@@ -86,6 +86,7 @@ static int obsd_clock_gettime(int, struct timespec *);
 static int _errno_to_libusb(int);
 static int _cache_active_config_descriptor(struct libusb_device *);
 static int _sync_control_transfer(struct usbi_transfer *);
+static int _sync_bulk_transfer(struct usbi_transfer *itransfer);
 static int _sync_gen_transfer(struct usbi_transfer *);
 static int _access_endpoint(struct libusb_transfer *);
 
@@ -249,6 +250,10 @@ obsd_open(struct libusb_device_handle *handle)
 	struct handle_priv *hpriv = (struct handle_priv *)handle->os_priv;
 	struct device_priv *dpriv = (struct device_priv *)handle->dev->os_priv;
 	char devnode[16];
+	int i;
+
+	for (i = 0; i < USB_MAX_ENDPOINTS; i++)
+		hpriv->endpoints[i] = -1;
 
 	if (dpriv->devname) {
 		/*
@@ -277,6 +282,13 @@ obsd_close(struct libusb_device_handle *handle)
 {
 	struct handle_priv *hpriv = (struct handle_priv *)handle->os_priv;
 	struct device_priv *dpriv = (struct device_priv *)handle->dev->os_priv;
+	int i;
+
+	for (i = 0; i < USB_MAX_ENDPOINTS; i++)
+		if (hpriv->endpoints[i] >= 0) {
+			close(hpriv->endpoints[i]);
+			hpriv->endpoints[i] = -1;
+		}
 
 	if (dpriv->devname) {
 		usbi_dbg("close: fd %d", dpriv->fd);
@@ -390,7 +402,10 @@ obsd_claim_interface(struct libusb_device_handle *handle, int iface)
 	int i;
 
 	for (i = 0; i < USB_MAX_ENDPOINTS; i++)
-		hpriv->endpoints[i] = -1;
+		if (hpriv->endpoints[i] >= 0) {
+			close(hpriv->endpoints[i]);
+			hpriv->endpoints[i] = -1;
+		}
 
 	return (LIBUSB_SUCCESS);
 }
@@ -402,8 +417,10 @@ obsd_release_interface(struct libusb_device_handle *handle, int iface)
 	int i;
 
 	for (i = 0; i < USB_MAX_ENDPOINTS; i++)
-		if (hpriv->endpoints[i] >= 0)
+		if (hpriv->endpoints[i] >= 0) {
 			close(hpriv->endpoints[i]);
+			hpriv->endpoints[i] = -1;
+		}
 
 	return (LIBUSB_SUCCESS);
 }
@@ -496,6 +513,12 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	case LIBUSB_TRANSFER_TYPE_CONTROL:
 		err = _sync_control_transfer(itransfer);
 		break;
+	case LIBUSB_TRANSFER_TYPE_BULK:
+		if (IS_XFERIN(transfer))
+			err = _sync_bulk_transfer(itransfer);
+		else
+			err = _sync_gen_transfer(itransfer);
+		break;
 	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
 		if (IS_XFEROUT(transfer)) {
 			/* Isochronous write is not supported */
@@ -504,7 +527,6 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 		}
 		err = _sync_gen_transfer(itransfer);
 		break;
-	case LIBUSB_TRANSFER_TYPE_BULK:
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 		if (IS_XFEROUT(transfer) &&
 		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
@@ -521,8 +543,13 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	if (err)
 		return (err);
 
-	if (transfer->type != LIBUSB_TRANSFER_TYPE_CONTROL)
-		usbi_signal_transfer_completion(itransfer);
+	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
+		return (LIBUSB_SUCCESS);
+	if (transfer->type == LIBUSB_TRANSFER_TYPE_BULK)
+		if (IS_XFERIN(transfer))
+			return (LIBUSB_SUCCESS);
+
+	usbi_signal_transfer_completion(itransfer);
 
 	return (LIBUSB_SUCCESS);
 }
@@ -543,7 +570,8 @@ obsd_cancel_transfer(struct usbi_transfer *itransfer)
 	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
 
 	if (transfer->type != LIBUSB_TRANSFER_TYPE_CONTROL)
-		return (LIBUSB_ERROR_NOT_SUPPORTED);
+		if (transfer->type != LIBUSB_TRANSFER_TYPE_BULK)
+			return (LIBUSB_ERROR_NOT_SUPPORTED);
 
 	if (dpriv->devname == NULL)
 		return (LIBUSB_ERROR_NOT_SUPPORTED);
@@ -611,6 +639,11 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 
 		if (pollfd->revents & POLLERR) {
 			usbi_dbg("got a disconnect event");
+			for (endpt = 0; endpt < USB_MAX_ENDPOINTS; endpt++)
+				if (hpriv->endpoints[endpt] >= 0) {
+					close(hpriv->endpoints[endpt]);
+					hpriv->endpoints[endpt] = -1;
+				}
 			usbi_remove_pollfd(HANDLE_CTX(handle), dpriv->fd);
 			usbi_handle_disconnect(handle);
 			continue;
@@ -792,6 +825,7 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	    libusb_le16_to_cpu(setup->wLength), transfer->timeout);
 
 	req.ucr_addr = transfer->dev_handle->dev->device_address;
+	req.ucr_endpt = UE_GET_ADDR(transfer->endpoint);
 	req.ucr_request.bmRequestType = setup->bmRequestType;
 	req.ucr_request.bRequest = setup->bRequest;
 	/* Don't use USETW, libusb already deals with the endianness */
@@ -799,12 +833,13 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 	(*(uint16_t *)req.ucr_request.wIndex) = setup->wIndex;
 	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
 	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
-
+	req.ucr_flags = 0;
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
 		req.ucr_flags = USBD_SHORT_XFER_OK;
-
-	req.ucr_context = itransfer;
+	req.ucr_actlen = setup->wLength;
 	req.ucr_timeout = transfer->timeout;
+	req.ucr_read = setup->bmRequestType & UT_READ;
+	req.ucr_context = itransfer;
 
 	if (dpriv->devname == NULL) {
 		if ((ioctl(dpriv->fd, USB_REQUEST, &req)) < 0) {
@@ -817,6 +852,43 @@ _sync_control_transfer(struct usbi_transfer *itransfer)
 			return _errno_to_libusb(errno);
 		}
 	}
+
+	return (0);
+}
+
+int
+_sync_bulk_transfer(struct usbi_transfer *itransfer)
+{
+	struct libusb_transfer *transfer;
+	struct device_priv *dpriv;
+	struct usb_ctl_request req;
+	int fd;
+
+	usbi_dbg("");
+
+	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
+	dpriv = (struct device_priv *)transfer->dev_handle->dev->os_priv;
+
+	if (dpriv->devname == NULL)
+		return (LIBUSB_ERROR_NOT_SUPPORTED);
+
+	if ((fd = _access_endpoint(transfer)) < 0)
+		return _errno_to_libusb(errno);
+
+	req.ucr_addr = transfer->dev_handle->dev->device_address;
+	req.ucr_endpt = UE_GET_ADDR(transfer->endpoint);
+	req.ucr_data = transfer->buffer;
+	req.ucr_flags = 0;
+	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
+		req.ucr_flags |= USBD_SHORT_XFER_OK;
+	if (transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET)
+		req.ucr_flags |= USBD_FORCE_SHORT_XFER;
+	req.ucr_actlen = transfer->length;
+	req.ucr_timeout = transfer->timeout;
+	req.ucr_read = IS_XFERIN(transfer);
+	req.ucr_context = itransfer;
+	if (ioctl(dpriv->fd, USB_DO_REQUEST, &req))
+		return _errno_to_libusb(errno);
 
 	return (0);
 }

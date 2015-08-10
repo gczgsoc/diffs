@@ -637,6 +637,7 @@ typedef struct usb_port_status usb_port_status_t;
 
 struct usb_ctl_request {
 	int	ucr_addr;
+	int	ucr_endpt;
 	usb_device_request_t ucr_request;
 	void	*ucr_data;
 	int	ucr_flags;
