@@ -648,7 +648,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 	{
 		struct usb_ctl_request *ur = (void *)data;
 		struct usb_ctl_request *kur;
-		int len = UGETW(ur->ucr_request.wLength);
+		int len = ur->ucr_actlen;
 		struct usbd_xfer *xfer;
 		struct iovec iov;
 		struct uio uio;
@@ -675,10 +675,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			return (EINVAL);
 		if (sc->sc_bus->devices[addr] == NULL)
 			return (ENXIO);
-		if (usbd_is_dying(sc->sc_bus->devices[addr])) {
-			usbd_free_xfer(xfer);
+		if (usbd_is_dying(sc->sc_bus->devices[addr]))
 			return (EIO);
-		}
 		xfer = usbd_alloc_xfer(sc->sc_bus->devices[addr]);
 		if (xfer == NULL)
 			return (ENOMEM);
@@ -690,9 +688,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 			uio.uio_resid = len;
 			uio.uio_offset = 0;
 			uio.uio_segflg = UIO_USERSPACE;
-			uio.uio_rw =
-				ur->ucr_request.bmRequestType & UT_READ ?
-				UIO_READ : UIO_WRITE;
+			uio.uio_rw = ur->ucr_read ?  UIO_READ : UIO_WRITE;
 			uio.uio_procp = p;
 			ptr = usbd_alloc_buffer(xfer, len);
 			if (ptr == NULL) {
@@ -798,7 +794,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		xfer = kur->xfer;
 		kur->ucr_status = xfer->status;
 		if (xfer->status == USBD_NORMAL_COMPLETION) {
-			len = UGETW(kur->ucr_request.wLength);
+			len = kur->ucr_actlen;
 			if (len > xfer->actlen)
 				len = xfer->actlen;
 			kur->ucr_actlen = len;
@@ -810,9 +806,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				uio.uio_resid = len;
 				uio.uio_offset = 0;
 				uio.uio_segflg = UIO_USERSPACE;
-				uio.uio_rw =
-					kur->ucr_request.bmRequestType & UT_READ ?
-					UIO_READ : UIO_WRITE;
+				uio.uio_rw = kur->ucr_read ?  UIO_READ : UIO_WRITE;
 				uio.uio_procp = p;
 				if (uio.uio_rw == UIO_READ) {
 					error = uiomovei(KERNADDR(&xfer->dmabuf, 0), len, &uio);
