@@ -1280,58 +1280,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		if (err != USBD_IN_PROGRESS) {
 			splx(s);
 			free(kur, M_TEMP, sizeof(*kur));
-			if (err == USBD_STALLED) {
-				usbd_free_buffer(xfer);
-				ptr = NULL;
-				error = EIO;
-				if (ur->ucr_endpt == USB_CONTROL_ENDPOINT) {
-					/*
-					 * The control endpoint has stalled.  Control endpoints
-					 * should not halt, but some may do so anyway so clear
-					 * any halt condition.
-					 */
-					usb_device_request_t treq;
-					usb_status_t status;
-					u_int16_t s;
-					usbd_status nerr;
-
-					treq.bmRequestType = UT_READ_ENDPOINT;
-					treq.bRequest = UR_GET_STATUS;
-					USETW(treq.wValue, 0);
-					USETW(treq.wIndex, 0);
-					USETW(treq.wLength, sizeof(usb_status_t));
-					usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
-					    &treq, &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
-					nerr = usbd_transfer(xfer);
-					if (nerr)
-						goto ret;
-					s = UGETW(status.wStatus);
-					DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
-					if (!(s & UES_HALT))
-						goto ret;
-					treq.bmRequestType = UT_WRITE_ENDPOINT;
-					treq.bRequest = UR_CLEAR_FEATURE;
-					USETW(treq.wValue, UF_ENDPOINT_HALT);
-					USETW(treq.wIndex, 0);
-					USETW(treq.wLength, 0);
-					usbd_setup_default_xfer(xfer, sc->sc_udev, 0, USBD_DEFAULT_TIMEOUT,
-					    &treq, &status, 0, USBD_SYNCHRONOUS, 0);
-					usbd_transfer(xfer);
-					goto ret;
-				} else {
-					usbd_clear_endpoint_stall(pipeh);
-				}
-			}
-
-			if (err == USBD_INTERRUPTED)
-				error = EINTR;
-			else if (err == USBD_TIMEOUT)
-				error = ETIMEDOUT;
-			else
-				error = EIO;
-		 ret:
 			usbd_free_xfer(xfer);
-			return (error);
+			return (EIO);
 		}
 		TAILQ_INSERT_TAIL(&submit_queue_head, kur, entries);
 		splx(s);
