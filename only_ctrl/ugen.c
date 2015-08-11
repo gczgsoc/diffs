@@ -1388,7 +1388,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		free(kur, M_TEMP, sizeof(*kur));
 		return (0);
 	}
-	case USB_CANCEL:
+	case USB_DO_CANCEL:
 	{
 		struct usb_ctl_request *ur = (void *)addr;
 		struct usb_ctl_request *kur;
