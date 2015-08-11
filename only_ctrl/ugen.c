@@ -145,7 +145,7 @@ void
 ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 {
 	struct usb_ctl_request *ur = priv;
-	struct ugen_softc *sc = ur->ucr_sce;
+	struct ugen_softc *sc = ur->ucr_sc;
 	struct ugen_endpoint *sce;
 
 	sce = &sc->sc_endpoints[USB_CONTROL_ENDPOINT][IN];
@@ -1247,8 +1247,11 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				}
 			}
 		}
-		ur->ucr_sce = sc;
-		sce = &sc->sc_endpoints[ur->ucr_endpt][IN];
+		ur->ucr_sc = sc;
+		if (ur->ucr_read)
+			sce = &sc->sc_endpoints[ur->ucr_endpt][IN];
+		else
+			sce = &sc->sc_endpoints[ur->ucr_endpt][OUT];
 		pipeh = sce->pipeh;
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {

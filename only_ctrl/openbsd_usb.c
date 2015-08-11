@@ -519,10 +519,7 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 			err = LIBUSB_ERROR_NOT_SUPPORTED;
 			break;
 		}
-		if (IS_XFERIN(transfer))
-			err = _sync_bulk_transfer(itransfer);
-		else
-			err = _sync_gen_transfer(itransfer);
+		err = _sync_bulk_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
 		if (IS_XFEROUT(transfer)) {
@@ -551,8 +548,7 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
 		return (LIBUSB_SUCCESS);
 	if (transfer->type == LIBUSB_TRANSFER_TYPE_BULK)
-		if (IS_XFERIN(transfer))
-			return (LIBUSB_SUCCESS);
+		return (LIBUSB_SUCCESS);
 
 	usbi_signal_transfer_completion(itransfer);
 

@@ -169,7 +169,7 @@ usbpoll(dev_t dev, int events, struct proc *p)
 
 void usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct usb_ctl_request *ur = priv;
-	struct usb_softc *sc = ur->ucr_sce;
+	struct usb_softc *sc = ur->ucr_sc;
 	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
 	selwakeup(&sc->rsel);
 }
@@ -706,7 +706,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 				}
 			}
 		}
-		ur->ucr_sce = sc;
+		ur->ucr_sc = sc;
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {
 			usbd_free_xfer(xfer);

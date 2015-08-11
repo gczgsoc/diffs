@@ -650,7 +650,7 @@ struct usb_ctl_request {
 	int 	ucr_timeout;
 	int 	ucr_status;
 	int 	ucr_read;
-	void 	*ucr_sce;
+	void 	*ucr_sc;
 	void	*ucr_context;
 	void *xfer;
 	TAILQ_ENTRY(usb_ctl_request) entries;
