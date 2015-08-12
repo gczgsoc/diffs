@@ -877,9 +877,6 @@ _sync_bulk_transfer(struct usbi_transfer *itransfer)
 	if (dpriv->devname == NULL)
 		return (LIBUSB_ERROR_NOT_SUPPORTED);
 
-	if ((fd = _access_endpoint(transfer)) < 0)
-		return _errno_to_libusb(errno);
-
 	req.ucr_addr = transfer->dev_handle->dev->device_address;
 	req.ucr_endpt = UE_GET_ADDR(transfer->endpoint);
 	req.ucr_data = transfer->buffer;

@@ -114,6 +114,7 @@ static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
     TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void ugen_async_callback(struct usbd_xfer *, void *, usbd_status);
+int ugen_open_pipe(struct ugen_softc *, int, int);
 void ugenintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
 void ugen_isoc_rintr(struct usbd_xfer *xfer, void *addr, usbd_status status);
 int ugen_do_read(struct ugen_softc *, int, struct uio *, int);
@@ -153,6 +154,108 @@ ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	TAILQ_REMOVE(&submit_queue_head, ur, entries);
 	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
 	selwakeup(&sce->rsel);
+}
+
+int
+ugen_open_pipe(struct ugen_softc *sc, int endpt, int dir)
+{
+	struct ugen_endpoint *sce;
+	usb_endpoint_descriptor_t *edesc;
+	struct usbd_xfer *xfer;
+	void *buf;
+	int err, isize, i, j;
+
+	/* Actually open the pipes. */
+	/* XXX Should back out properly if it fails. */
+	sce = &sc->sc_endpoints[endpt][dir];
+	sce->state = 0;
+	sce->timeout = USBD_NO_TIMEOUT;
+	edesc = sce->edesc;
+	switch (edesc->bmAttributes & UE_XFERTYPE) {
+	case UE_INTERRUPT:
+		if (dir == OUT) {
+			err = usbd_open_pipe(sce->iface,
+			    edesc->bEndpointAddress, 0, &sce->pipeh);
+			if (err)
+				return (EIO);
+			break;
+		}
+		isize = UGETW(edesc->wMaxPacketSize);
+		if (isize == 0)	/* shouldn't happen */
+			return (EINVAL);
+		sce->ibuf = malloc(isize, M_USBDEV, M_WAITOK);
+		DPRINTFN(5, ("ugenopen: intr endpt=%d,isize=%d\n",
+			     endpt, isize));
+		clalloc(&sce->q, UGEN_IBSIZE, 0);
+		err = usbd_open_pipe_intr(sce->iface,
+			  edesc->bEndpointAddress,
+			  USBD_SHORT_XFER_OK, &sce->pipeh, sce,
+			  sce->ibuf, isize, ugenintr,
+			  USBD_DEFAULT_INTERVAL);
+		if (err) {
+			free(sce->ibuf, M_USBDEV, 0);
+			clfree(&sce->q);
+			return (EIO);
+		}
+		DPRINTFN(5, ("ugenopen: interrupt open done\n"));
+		break;
+	case UE_BULK:
+		err = usbd_open_pipe(sce->iface,
+			  edesc->bEndpointAddress, 0, &sce->pipeh);
+		if (err)
+			return (EIO);
+		break;
+	case UE_ISOCHRONOUS:
+		if (dir == OUT)
+			return (EINVAL);
+		isize = UGETW(edesc->wMaxPacketSize);
+		if (isize == 0)	/* shouldn't happen */
+			return (EINVAL);
+		sce->ibuf = mallocarray(isize, UGEN_NISOFRAMES,
+			M_USBDEV, M_WAITOK);
+		sce->cur = sce->fill = sce->ibuf;
+		sce->limit = sce->ibuf + isize * UGEN_NISOFRAMES;
+		DPRINTFN(5, ("ugenopen: isoc endpt=%d, isize=%d\n",
+			     endpt, isize));
+		err = usbd_open_pipe(sce->iface,
+			  edesc->bEndpointAddress, 0, &sce->pipeh);
+		if (err) {
+			free(sce->ibuf, M_USBDEV, 0);
+			return (EIO);
+		}
+		for(i = 0; i < UGEN_NISOREQS; ++i) {
+			sce->isoreqs[i].sce = sce;
+			xfer = usbd_alloc_xfer(sc->sc_udev);
+			if (xfer == 0)
+				goto bed;
+			sce->isoreqs[i].xfer = xfer;
+			buf = usbd_alloc_buffer
+				(xfer, isize * UGEN_NISORFRMS);
+			if (buf == 0) {
+				i++;
+				goto bed;
+			}
+			sce->isoreqs[i].dmabuf = buf;
+			for(j = 0; j < UGEN_NISORFRMS; ++j)
+				sce->isoreqs[i].sizes[j] = isize;
+			usbd_setup_isoc_xfer(xfer, sce->pipeh,
+			    &sce->isoreqs[i], sce->isoreqs[i].sizes,
+			    UGEN_NISORFRMS, USBD_NO_COPY |
+			    USBD_SHORT_XFER_OK, ugen_isoc_rintr);
+			(void)usbd_transfer(xfer);
+		}
+		DPRINTFN(5, ("ugenopen: isoc open done\n"));
+		break;
+	bed:
+		while (--i >= 0) /* implicit buffer free */
+			usbd_free_xfer(sce->isoreqs[i].xfer);
+		return (ENOMEM);
+	case UE_CONTROL:
+		sce->timeout = USBD_DEFAULT_TIMEOUT;
+		return (EINVAL);
+	}
+	sc->sc_is_open[endpt] = 1;
+	return (0);
 }
 
 int
@@ -206,13 +309,14 @@ int
 ugen_set_config(struct ugen_softc *sc, int configno)
 {
 	struct usbd_device *dev = sc->sc_udev;
+	struct usb_ctl_request *ur;
 	usb_config_descriptor_t *cdesc;
 	usb_interface_descriptor_t *id;
 	struct usbd_interface *iface;
 	usb_endpoint_descriptor_t *ed;
 	struct ugen_endpoint *sce;
 	int ifaceno, endptno, endpt;
-	int err, dir;
+	int err, dir, i;
 
 	DPRINTFN(1,("ugen_set_config: %s to configno %d, sc=%p\n",
 		    sc->sc_dev.dv_xname, configno, sc));
@@ -221,13 +325,46 @@ ugen_set_config(struct ugen_softc *sc, int configno)
 	 * We start at 1, not 0, because we don't care whether the
 	 * control endpoint is open or not. It is always present.
 	 */
-	for (endptno = 1; endptno < USB_MAX_ENDPOINTS; endptno++)
-		if (sc->sc_is_open[endptno]) {
-			DPRINTFN(1,
-			     ("ugen_set_config: %s - endpoint %d is open\n",
-			      sc->sc_dev.dv_xname, endptno));
-			return (USBD_IN_USE);
+	for (endptno = 1; endptno < USB_MAX_ENDPOINTS; endptno++) {
+		if (!sc->sc_is_open[endptno])
+			continue;
+		for (dir = OUT; dir <= IN; dir++) {
+			sce = &sc->sc_endpoints[endptno][dir];
+			if (sce == NULL || sce->pipeh == NULL)
+				continue;
+			DPRINTFN(5, ("ugenclose: endpt=%d dir=%d sce=%p\n",
+				     endptno, dir, sce));
+
+			usbd_close_pipe(sce->pipeh);
+			sce->pipeh = NULL;
+
+			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
+			case UE_INTERRUPT:
+				ndflush(&sce->q, sce->q.c_cc);
+				clfree(&sce->q);
+				break;
+			case UE_ISOCHRONOUS:
+				for (i = 0; i < UGEN_NISOREQS; ++i)
+					usbd_free_xfer(sce->isoreqs[i].xfer);
+
+			default:
+				break;
+			}
+
+			if (sce->ibuf != NULL) {
+				free(sce->ibuf, M_USBDEV, 0);
+				sce->ibuf = NULL;
+			}
 		}
+		sc->sc_is_open[endptno] = 0;
+	}
+
+	usbd_abort_pipe(dev->default_pipe);
+
+	while ((ur = TAILQ_FIRST(&complete_queue_head))) {
+		TAILQ_REMOVE(&complete_queue_head, ur, entries);
+		free(ur, M_TEMP, sizeof(*ur));
+	}
 
 	/* Avoid setting the current value. */
 	cdesc = usbd_get_config_descriptor(dev);
@@ -283,7 +420,6 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 	int dir, isize;
 	usbd_status err;
 	struct usbd_xfer *xfer;
-	struct usb_ctl_request *ur;
 	void *buf;
 	int i, j;
 
@@ -304,10 +440,6 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
 		sc->sc_is_open[USB_CONTROL_ENDPOINT] = 1;
-		while ((ur = TAILQ_FIRST(&complete_queue_head))) {
-			TAILQ_REMOVE(&complete_queue_head, ur, entries);
-			free(ur, M_TEMP, sizeof(*ur));
-		}
 		return (0);
 	}
 
@@ -444,7 +576,9 @@ int
 ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 {
 	struct ugen_endpoint *sce;
-	int dir, i;
+	struct usbd_device *dev = sc->sc_udev;
+	struct usb_ctl_request *ur;
+	int dir, i, e;
 
 #ifdef DIAGNOSTIC
 	if (!sc->sc_is_open[endpt]) {
@@ -454,8 +588,50 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 #endif
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
+		for (e = 1; e < USB_MAX_ENDPOINTS; e++) {
+			if (!sc->sc_is_open[e])
+				continue;
+			for (dir = OUT; dir <= IN; dir++) {
+				sce = &sc->sc_endpoints[e][dir];
+				if (sce == NULL || sce->pipeh == NULL)
+					continue;
+				DPRINTFN(5, ("ugenclose: endpt=%d dir=%d sce=%p\n",
+					     e, dir, sce));
+
+				usbd_close_pipe(sce->pipeh);
+				sce->pipeh = NULL;
+
+				switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
+				case UE_INTERRUPT:
+					ndflush(&sce->q, sce->q.c_cc);
+					clfree(&sce->q);
+					break;
+				case UE_ISOCHRONOUS:
+					for (i = 0; i < UGEN_NISOREQS; ++i)
+						usbd_free_xfer(sce->isoreqs[i].xfer);
+
+				default:
+					break;
+				}
+
+				if (sce->ibuf != NULL) {
+					free(sce->ibuf, M_USBDEV, 0);
+					sce->ibuf = NULL;
+				}
+			}
+			sc->sc_is_open[e] = 0;
+		}
+
+		usbd_abort_pipe(dev->default_pipe);
+
+		while ((ur = TAILQ_FIRST(&complete_queue_head))) {
+			TAILQ_REMOVE(&complete_queue_head, ur, entries);
+			free(ur, M_TEMP, sizeof(*ur));
+		}
+
 		DPRINTFN(5, ("ugenclose: close control\n"));
 		sc->sc_is_open[endpt] = 0;
+
 		return (0);
 	}
 
@@ -1200,7 +1376,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		usbd_status err;
 		void *ptr = 0;
 		int error = 0;
-		int s;
+		int s, dir;
 
 		if (!(flag & FWRITE))
 			return (EPERM);
@@ -1248,11 +1424,23 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			}
 		}
 		ur->ucr_sc = sc;
-		if (ur->ucr_read)
-			sce = &sc->sc_endpoints[ur->ucr_endpt][IN];
-		else
-			sce = &sc->sc_endpoints[ur->ucr_endpt][OUT];
-		pipeh = sce->pipeh;
+		if (ur->ucr_endpt != USB_CONTROL_ENDPOINT) {
+			dir = ur->ucr_read ? IN : OUT;
+			sce = &sc->sc_endpoints[ur->ucr_endpt][dir];
+			if (sce == 0 || sce->edesc == 0) {
+				usbd_free_xfer(xfer);
+				return (ENXIO);
+			}
+			if (!(sc->sc_is_open[ur->ucr_endpt])) {
+				error = ugen_open_pipe(sc, ur->ucr_endpt, dir);
+				if (error) {
+					printf("open pipe error\n");
+					usbd_free_xfer(xfer);
+					return (error);
+				}
+			}
+			pipeh = sce->pipeh;
+		}
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {
 			usbd_free_xfer(xfer);
