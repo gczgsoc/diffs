@@ -513,32 +513,22 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 	case LIBUSB_TRANSFER_TYPE_CONTROL:
 		err = _sync_control_transfer(itransfer);
 		break;
-	case LIBUSB_TRANSFER_TYPE_BULK:
-		if (IS_XFEROUT(transfer) &&
-		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
-			err = LIBUSB_ERROR_NOT_SUPPORTED;
-			break;
-		}
-		if (dpriv->devname == NULL)
-			err = _sync_gen_transfer(itransfer);
-		else
-			err = _sync_bulk_transfer(itransfer);
-		break;
 	case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS:
 		if (IS_XFEROUT(transfer)) {
 			/* Isochronous write is not supported */
 			err = LIBUSB_ERROR_NOT_SUPPORTED;
 			break;
 		}
-		err = _sync_gen_transfer(itransfer);
+		err = _sync_bulk_transfer(itransfer);
 		break;
+	case LIBUSB_TRANSFER_TYPE_BULK:
 	case LIBUSB_TRANSFER_TYPE_INTERRUPT:
 		if (IS_XFEROUT(transfer) &&
 		    transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET) {
 			err = LIBUSB_ERROR_NOT_SUPPORTED;
 			break;
 		}
-		err = _sync_gen_transfer(itransfer);
+		err = _sync_bulk_transfer(itransfer);
 		break;
 	case LIBUSB_TRANSFER_TYPE_BULK_STREAM:
 		err = LIBUSB_ERROR_NOT_SUPPORTED;
@@ -547,14 +537,6 @@ obsd_submit_transfer(struct usbi_transfer *itransfer)
 
 	if (err)
 		return (err);
-
-	if (transfer->type == LIBUSB_TRANSFER_TYPE_CONTROL)
-		return (LIBUSB_SUCCESS);
-	if (transfer->type == LIBUSB_TRANSFER_TYPE_BULK)
-		if (dpriv->devname != NULL)
-			return (LIBUSB_SUCCESS);
-
-	usbi_signal_transfer_completion(itransfer);
 
 	return (LIBUSB_SUCCESS);
 }
