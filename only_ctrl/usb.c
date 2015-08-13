@@ -98,6 +98,8 @@ struct usb_softc {
 
 	struct timeval	 sc_ptime;
 
+	TAILQ_HEAD(, usb_ctl_request) submit_queue_head;
+	TAILQ_HEAD(, usb_ctl_request) complete_queue_head;
 	struct selinfo rsel;
 };
 
@@ -111,9 +113,6 @@ static int usb_nbuses = 0;
 static int usb_run_tasks, usb_run_abort_tasks;
 int explore_pending;
 const char *usbrev_str[] = USBREV_STR;
-
-static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
-    TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void usb_async_callback(struct usbd_xfer *, void *, usbd_status);
 void		 usb_explore(void *);
@@ -158,7 +157,7 @@ usbpoll(dev_t dev, int events, struct proc *p)
 
 	s = splusb();
 	if (events & (POLLIN | POLLRDNORM)) {
-		if (!TAILQ_EMPTY(&complete_queue_head))
+		if (!TAILQ_EMPTY(&sc->complete_queue_head))
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
 			selrecord(p, &sc->rsel);
@@ -172,7 +171,8 @@ void usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct usb_softc *sc = ur->ucr_sc;
 
 	ur->ucr_status = xfer->status;
-	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
+	//TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
+	TAILQ_INSERT_TAIL(&sc->complete_queue_head, ur, entries);
 	selwakeup(&sc->rsel);
 }
 
@@ -533,6 +533,9 @@ usbopen(dev_t dev, int flag, int mode, struct proc *p)
 	if (sc->sc_bus->dying)
 		return (EIO);
 
+	TAILQ_INIT(&sc->submit_queue_head);
+	TAILQ_INIT(&sc->complete_queue_head);
+
 	return (0);
 }
 
@@ -658,6 +661,7 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		int addr = ur->ucr_addr;
 		usbd_status err;
 		int error = 0;
+		int s;
 
 		if (!(flag & FWRITE))
 			return (EBADF);
@@ -717,60 +721,16 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		    sc->sc_bus->devices[addr], kur, ur->ucr_timeout,
 		    &ur->ucr_request, NULL, len,
 		    ur->ucr_flags | USBD_NO_COPY, usb_async_callback);
+		s = splusb();
 		err = usbd_transfer(xfer);
 		if (err != USBD_IN_PROGRESS) {
-			if (err == USBD_STALLED) {
-				free(kur, M_TEMP, sizeof(*kur));
-				usbd_free_buffer(xfer);
-				ptr = NULL;
-				error = EIO;
-				/*
-				 * The control endpoint has stalled.  Control endpoints
-				 * should not halt, but some may do so anyway so clear
-				 * any halt condition.
-				 */
-				usb_device_request_t treq;
-				usb_status_t status;
-				u_int16_t s;
-				usbd_status nerr;
-
-				treq.bmRequestType = UT_READ_ENDPOINT;
-				treq.bRequest = UR_GET_STATUS;
-				USETW(treq.wValue, 0);
-				USETW(treq.wIndex, 0);
-				USETW(treq.wLength, sizeof(usb_status_t));
-				usbd_setup_default_xfer(xfer,
-				    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq,
-				    &status, sizeof(usb_status_t), USBD_SYNCHRONOUS, 0);
-				nerr = usbd_transfer(xfer);
-				if (nerr)
-					goto ret;
-				s = UGETW(status.wStatus);
-				DPRINTF(("usbd_do_request: status = 0x%04x\n", s));
-				if (!(s & UES_HALT))
-					goto ret;
-				treq.bmRequestType = UT_WRITE_ENDPOINT;
-				treq.bRequest = UR_CLEAR_FEATURE;
-				USETW(treq.wValue, UF_ENDPOINT_HALT);
-				USETW(treq.wIndex, 0);
-				USETW(treq.wLength, 0);
-				usbd_setup_default_xfer(xfer,
-				    sc->sc_bus->devices[addr], 0, USBD_DEFAULT_TIMEOUT, &treq,
-				    &status, 0, USBD_SYNCHRONOUS, 0);
-				usbd_transfer(xfer);
-				goto ret;
-			}
-
-			if (err == USBD_INTERRUPTED)
-				error = EINTR;
-			else if (err == USBD_TIMEOUT)
-				error = ETIMEDOUT;
-			else
-				error = EIO;
-		 ret:
+			splx(s);
+			free(kur, M_TEMP, sizeof(*kur));
 			usbd_free_xfer(xfer);
-			return (error);
+			return (EIO);
 		}
+		//TAILQ_INSERT_TAIL(&sc->submit_queue_head, kur, entries);
+		splx(s);
 		return (error);
 	}
 	case USB_COMPLETED:
@@ -785,12 +745,12 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		int error = 0;
 
 		s = splusb();
-		kur = TAILQ_FIRST(&complete_queue_head);
+		kur = TAILQ_FIRST(&sc->complete_queue_head);
 		if (kur == NULL) {
 			splx(s);
 			return (EIO);
 		}
-		TAILQ_REMOVE(&complete_queue_head, kur, entries);
+		TAILQ_REMOVE(&sc->complete_queue_head, kur, entries);
 		splx(s);
 
 		xfer = kur->xfer;
@@ -821,6 +781,40 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 
 		*ur = *kur;
 		free(kur, M_TEMP, sizeof(*kur));
+		return (0);
+	}
+	case USB_CANCEL:
+	{
+		struct usb_ctl_request *ur = (void *)data;
+		struct usb_ctl_request *kur;
+		struct usb_ctl_request *np;
+		int s;
+
+		s = splusb();
+		kur = NULL;
+		TAILQ_FOREACH(np, &sc->submit_queue_head, entries) {
+			if (np->ucr_context == ur->ucr_context) {
+				kur = np;
+				break;
+			}
+		}
+		if (kur == NULL) {
+			TAILQ_FOREACH(np, &sc->complete_queue_head, entries) {
+				if (np->ucr_context == ur->ucr_context) {
+					kur = np;
+					break;
+				}
+			}
+			if (kur == NULL) {
+				splx(s);
+				return (EINVAL);
+			} else {
+				kur->ucr_status = USBD_CANCELLED;
+			}
+		} else {
+			usbd_abort_transfer(kur->xfer);
+		}
+		splx(s);
 		return (0);
 	}
 
