@@ -104,14 +104,11 @@ struct ugen_softc {
 #define OUT 0
 #define IN  1
 
+	TAILQ_HEAD(, usb_ctl_request) submit_queue_head;
+	TAILQ_HEAD(, usb_ctl_request) complete_queue_head;
 	int sc_refcnt;
 	u_char sc_secondary;
 };
-
-static TAILQ_HEAD(, usb_ctl_request) submit_queue_head =
-    TAILQ_HEAD_INITIALIZER(submit_queue_head);
-static TAILQ_HEAD(, usb_ctl_request) complete_queue_head =
-    TAILQ_HEAD_INITIALIZER(complete_queue_head);
 
 void ugen_async_callback(struct usbd_xfer *, void *, usbd_status);
 int ugen_open_pipe(struct ugen_softc *, int, int);
@@ -151,8 +148,8 @@ ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 
 	sce = &sc->sc_endpoints[USB_CONTROL_ENDPOINT][IN];
 	ur->ucr_status = xfer->status;
-	TAILQ_REMOVE(&submit_queue_head, ur, entries);
-	TAILQ_INSERT_TAIL(&complete_queue_head, ur, entries);
+	TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
+	TAILQ_INSERT_TAIL(&sc->complete_queue_head, ur, entries);
 	selwakeup(&sce->rsel);
 }
 
@@ -361,8 +358,13 @@ ugen_set_config(struct ugen_softc *sc, int configno)
 
 	usbd_abort_pipe(dev->default_pipe);
 
-	while ((ur = TAILQ_FIRST(&complete_queue_head))) {
-		TAILQ_REMOVE(&complete_queue_head, ur, entries);
+	while ((ur = TAILQ_FIRST(&sc->submit_queue_head))) {
+		TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
+		free(ur, M_TEMP, sizeof(*ur));
+	}
+
+	while ((ur = TAILQ_FIRST(&sc->complete_queue_head))) {
+		TAILQ_REMOVE(&sc->complete_queue_head, ur, entries);
 		free(ur, M_TEMP, sizeof(*ur));
 	}
 
@@ -440,6 +442,8 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 
 	if (endpt == USB_CONTROL_ENDPOINT) {
 		sc->sc_is_open[USB_CONTROL_ENDPOINT] = 1;
+		TAILQ_INIT(&sc->submit_queue_head);
+		TAILQ_INIT(&sc->complete_queue_head);
 		return (0);
 	}
 
@@ -624,8 +628,13 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 
 		usbd_abort_pipe(dev->default_pipe);
 
-		while ((ur = TAILQ_FIRST(&complete_queue_head))) {
-			TAILQ_REMOVE(&complete_queue_head, ur, entries);
+		while ((ur = TAILQ_FIRST(&sc->submit_queue_head))) {
+			TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
+			free(ur, M_TEMP, sizeof(*ur));
+		}
+
+		while ((ur = TAILQ_FIRST(&sc->complete_queue_head))) {
+			TAILQ_REMOVE(&sc->complete_queue_head, ur, entries);
 			free(ur, M_TEMP, sizeof(*ur));
 		}
 
@@ -1471,7 +1480,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			usbd_free_xfer(xfer);
 			return (EIO);
 		}
-		TAILQ_INSERT_TAIL(&submit_queue_head, kur, entries);
+		TAILQ_INSERT_TAIL(&sc->submit_queue_head, kur, entries);
 		splx(s);
 		return (error);
 	}
@@ -1488,12 +1497,12 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int error = 0;
 
 		s = splusb();
-		kur = TAILQ_FIRST(&complete_queue_head);
+		kur = TAILQ_FIRST(&sc->complete_queue_head);
 		if (kur == NULL) {
 			splx(s);
 			return (EIO);
 		}
-		TAILQ_REMOVE(&complete_queue_head, kur, entries);
+		TAILQ_REMOVE(&sc->complete_queue_head, kur, entries);
 		splx(s);
 
 		xfer = kur->xfer;
@@ -1535,14 +1544,14 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		s = splusb();
 		kur = NULL;
-		TAILQ_FOREACH(np, &submit_queue_head, entries) {
+		TAILQ_FOREACH(np, &sc->submit_queue_head, entries) {
 			if (np->ucr_context == ur->ucr_context) {
 				kur = np;
 				break;
 			}
 		}
 		if (kur == NULL) {
-			TAILQ_FOREACH(np, &complete_queue_head, entries) {
+			TAILQ_FOREACH(np, &sc->complete_queue_head, entries) {
 				if (np->ucr_context == ur->ucr_context) {
 					kur = np;
 					break;
@@ -1618,7 +1627,7 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	s = splusb();
 	if (UGENENDPOINT(dev) == USB_CONTROL_ENDPOINT) {
 		if (events & (POLLIN | POLLRDNORM)) {
-			if (!TAILQ_EMPTY(&complete_queue_head))
+			if (!TAILQ_EMPTY(&sc->complete_queue_head))
 				revents |= events & (POLLIN | POLLRDNORM);
 			else
 				selrecord(p, &sce->rsel);
