@@ -1401,7 +1401,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			if (len < 0 || len > 32767)
 				return (EINVAL);
 		}
-		/* are bulk transfers of length zero allowed? */
 		if (len < 0)
 			return (EINVAL);
 		if (usbd_is_dying(sc->sc_udev))
@@ -1433,23 +1432,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			}
 		}
 		ur->ucr_sc = sc;
-		if (ur->ucr_endpt != USB_CONTROL_ENDPOINT) {
-			dir = ur->ucr_read ? IN : OUT;
-			sce = &sc->sc_endpoints[ur->ucr_endpt][dir];
-			if (sce == 0 || sce->edesc == 0) {
-				usbd_free_xfer(xfer);
-				return (ENXIO);
-			}
-			if (!(sc->sc_is_open[ur->ucr_endpt])) {
-				error = ugen_open_pipe(sc, ur->ucr_endpt, dir);
-				if (error) {
-					printf("open pipe error\n");
-					usbd_free_xfer(xfer);
-					return (error);
-				}
-			}
-			pipeh = sce->pipeh;
-		}
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
 		if (kur == NULL) {
 			usbd_free_xfer(xfer);
@@ -1462,8 +1444,23 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			    kur, ur->ucr_timeout, &ur->ucr_request, NULL, len,
 			    ur->ucr_flags | USBD_NO_COPY, ugen_async_callback);
 		} else {
+			dir = ur->ucr_read ? IN : OUT;
+			sce = &sc->sc_endpoints[ur->ucr_endpt][dir];
+			if (sce == 0 || sce->edesc == 0) {
+				free(kur, M_TEMP, sizeof(*kur));
+				usbd_free_xfer(xfer);
+				return (ENXIO);
+			}
+			if (!(sc->sc_is_open[ur->ucr_endpt])) {
+				error = ugen_open_pipe(sc, ur->ucr_endpt, dir);
+				if (error) {
+					free(kur, M_TEMP, sizeof(*kur));
+					usbd_free_xfer(xfer);
+					return (error);
+				}
+			}
+			pipeh = sce->pipeh;
 			if (pipeh == NULL) {
-				printf("null pipe\n");
 				free(kur, M_TEMP, sizeof(*kur));
 				usbd_free_xfer(xfer);
 				return (EIO);
@@ -1492,6 +1489,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct usbd_xfer *xfer;
 		struct uio uio;
 		struct iovec iov;
+		void *buf;
 		int len;
 		int s;
 		int error = 0;
@@ -1508,9 +1506,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		xfer = kur->xfer;
 		if (kur->ucr_status == USBD_NORMAL_COMPLETION) {
 			len = kur->ucr_actlen;
-			if (len > xfer->actlen)
-				len = xfer->actlen;
-			kur->ucr_actlen = len;
 			if (len != 0) {
 				iov.iov_base = (caddr_t)kur->ucr_data;
 				iov.iov_len = len;
@@ -1519,13 +1514,14 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				uio.uio_resid = len;
 				uio.uio_offset = 0;
 				uio.uio_segflg = UIO_USERSPACE;
-				uio.uio_rw = kur->ucr_read ? UIO_READ : UIO_WRITE;
+				uio.uio_rw = kur->ucr_read ?
+				    UIO_READ : UIO_WRITE;
 				uio.uio_procp = p;
 				if (uio.uio_rw == UIO_READ) {
-					error = uiomovei(KERNADDR(&xfer->dmabuf, 0), len, &uio);
-					if (error) {
+					buf = KERNADDR(&xfer->dmabuf, 0);
+					error = uiomovei(buf, len, &uio);
+					if (error)
 						kur->ucr_status = USBD_IOERROR;
-					}
 				}
 			}
 		}
@@ -1540,34 +1536,31 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct usb_ctl_request *ur = (void *)addr;
 		struct usb_ctl_request *kur;
 		struct usb_ctl_request *np;
+		int err = 0;
 		int s;
 
 		s = splusb();
 		kur = NULL;
-		TAILQ_FOREACH(np, &sc->submit_queue_head, entries) {
+		TAILQ_FOREACH(np, &sc->submit_queue_head, entries)
 			if (np->ucr_context == ur->ucr_context) {
 				kur = np;
 				break;
 			}
-		}
-		if (kur == NULL) {
-			TAILQ_FOREACH(np, &sc->complete_queue_head, entries) {
+		if (kur)
+			usbd_abort_transfer(kur->xfer);
+		else {
+			TAILQ_FOREACH(np, &sc->complete_queue_head, entries)
 				if (np->ucr_context == ur->ucr_context) {
 					kur = np;
 					break;
 				}
-			}
-			if (kur == NULL) {
-				splx(s);
-				return (EINVAL);
-			} else {
+			if (kur)
 				kur->ucr_status = USBD_CANCELLED;
-			}
-		} else {
-			usbd_abort_transfer(kur->xfer);
+			else
+				err = EINVAL;
 		}
 		splx(s);
-		return (0);
+		return (err);
 	}
 	case USB_GET_DEVICEINFO:
 		usbd_fill_deviceinfo(sc->sc_udev,
