@@ -1389,6 +1389,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 
 		if (!(flag & FWRITE))
 			return (EPERM);
+		if (ur->ucr_endpt < 0 || ur->ucr_endpt > USB_MAX_ENDPOINTS)
+			return (EINVAL);
 		if (ur->ucr_endpt == USB_CONTROL_ENDPOINT) {
 			/* Avoid requests that would damage the bus integrity. */
 			if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
