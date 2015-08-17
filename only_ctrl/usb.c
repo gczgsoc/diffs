@@ -665,6 +665,10 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		if (!(flag & FWRITE))
 			return (EBADF);
 
+		if (ur->ucr_endpt < 0 || ur->ucr_endpt > USB_MAX_ENDPOINTS)
+			return (EINVAL);
+		if (ur->ucr_endpt != USB_CONTROL_ENDPOINT)
+			return (EINVAL);
 		DPRINTF(("usbioctl: USB_REQUEST addr=%d len=%d\n", addr, len));
 		/* Avoid requests that would damage the bus integrity. */
 		if ((ur->ucr_request.bmRequestType == UT_WRITE_DEVICE &&
@@ -707,6 +711,42 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 					return (error);
 				}
 			}
+		}
+		if (ur->ucr_flags & USBD_SYNCHRONOUS) {
+			usbd_setup_default_xfer(xfer,
+			    sc->sc_bus->devices[addr],
+			    NULL, ur->ucr_timeout, &ur->ucr_request,
+			    NULL, len, ur->ucr_flags | USBD_NO_COPY,
+			    NULL);
+			err = usbd_transfer(xfer);
+			if (err) {
+				if (err == USBD_INTERRUPTED)
+					error = EINTR;
+				else if (err == USBD_TIMEOUT)
+					error = ETIMEDOUT;
+				else
+					error = EIO;
+				usbd_free_xfer(xfer);
+				return (error);
+			}
+			len = xfer->actlen;
+			if (len != 0) {
+				iov.iov_base = (caddr_t)ur->ucr_data;
+				iov.iov_len = len;
+				uio.uio_iov = &iov;
+				uio.uio_iovcnt = 1;
+				uio.uio_resid = len;
+				uio.uio_offset = 0;
+				uio.uio_segflg = UIO_USERSPACE;
+				uio.uio_rw = ur->ucr_read ?
+				    UIO_READ : UIO_WRITE;
+				uio.uio_procp = p;
+				if (uio.uio_rw == UIO_READ) {
+					error = uiomovei(ptr, len, &uio);
+				}
+			}
+			usbd_free_xfer(xfer);
+			return (error);
 		}
 		ur->ucr_sc = sc;
 		kur = malloc(sizeof(*kur), M_TEMP, M_WAITOK);
