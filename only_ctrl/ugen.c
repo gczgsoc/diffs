@@ -1405,12 +1405,11 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				usbd_free_xfer(xfer);
 				return (ENOMEM);
 			}
-			if (uio.uio_rw == UIO_WRITE) {
+			if (uio.uio_rw == UIO_WRITE)
 				error = uiomovei(ptr, len, &uio);
-				if (error) {
-					usbd_free_xfer(xfer);
-					return (error);
-				}
+			if (error) {
+				usbd_free_xfer(xfer);
+				return (error);
 			}
 		}
 		if (ur->ucr_flags & USBD_SYNCHRONOUS) {
@@ -1451,9 +1450,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				uio.uio_rw = ur->ucr_read ?
 				    UIO_READ : UIO_WRITE;
 				uio.uio_procp = p;
-				if (uio.uio_rw == UIO_READ) {
+				if (uio.uio_rw == UIO_READ)
 					error = uiomovei(ptr, len, &uio);
-				}
 			}
 			usbd_free_xfer(xfer);
 			return (error);
