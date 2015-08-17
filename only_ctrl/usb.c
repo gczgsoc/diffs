@@ -201,6 +201,8 @@ usb_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_bus = aux;
 	sc->sc_bus->usbctl = self;
 	sc->sc_port.power = USB_MAX_POWER;
+	TAILQ_INIT(&sc->submit_queue_head);
+	TAILQ_INIT(&sc->complete_queue_head);
 
 	usbrev = sc->sc_bus->usbrev;
 	printf(": USB revision %s", usbrev_str[usbrev]);
@@ -532,9 +534,6 @@ usbopen(dev_t dev, int flag, int mode, struct proc *p)
 
 	if (sc->sc_bus->dying)
 		return (EIO);
-
-	TAILQ_INIT(&sc->submit_queue_head);
-	TAILQ_INIT(&sc->complete_queue_head);
 
 	return (0);
 }
