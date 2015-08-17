@@ -98,7 +98,6 @@ struct usb_softc {
 
 	struct timeval	 sc_ptime;
 
-	TAILQ_HEAD(, usb_ctl_request) submit_queue_head;
 	TAILQ_HEAD(, usb_ctl_request) complete_queue_head;
 	struct selinfo rsel;
 };
@@ -171,7 +170,6 @@ void usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
 	struct usb_softc *sc = ur->ucr_sc;
 
 	ur->ucr_status = xfer->status;
-	//TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
 	TAILQ_INSERT_TAIL(&sc->complete_queue_head, ur, entries);
 	selwakeup(&sc->rsel);
 }
@@ -201,7 +199,6 @@ usb_attach(struct device *parent, struct device *self, void *aux)
 	sc->sc_bus = aux;
 	sc->sc_bus->usbctl = self;
 	sc->sc_port.power = USB_MAX_POWER;
-	TAILQ_INIT(&sc->submit_queue_head);
 	TAILQ_INIT(&sc->complete_queue_head);
 
 	usbrev = sc->sc_bus->usbrev;
@@ -660,7 +657,6 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		int addr = ur->ucr_addr;
 		usbd_status err;
 		int error = 0;
-		int s;
 
 		if (!(flag & FWRITE))
 			return (EBADF);
@@ -760,16 +756,12 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		    sc->sc_bus->devices[addr], kur, ur->ucr_timeout,
 		    &ur->ucr_request, NULL, len,
 		    ur->ucr_flags | USBD_NO_COPY, usb_async_callback);
-		s = splusb();
 		err = usbd_transfer(xfer);
 		if (err != USBD_IN_PROGRESS) {
-			splx(s);
 			free(kur, M_TEMP, sizeof(*kur));
 			usbd_free_xfer(xfer);
 			return (EIO);
 		}
-		//TAILQ_INSERT_TAIL(&sc->submit_queue_head, kur, entries);
-		splx(s);
 		return (error);
 	}
 	case USB_COMPLETED:
@@ -822,41 +814,6 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 		free(kur, M_TEMP, sizeof(*kur));
 		return (0);
 	}
-	case USB_CANCEL:
-	{
-		struct usb_ctl_request *ur = (void *)data;
-		struct usb_ctl_request *kur;
-		struct usb_ctl_request *np;
-		int s;
-
-		s = splusb();
-		kur = NULL;
-		TAILQ_FOREACH(np, &sc->submit_queue_head, entries) {
-			if (np->ucr_context == ur->ucr_context) {
-				kur = np;
-				break;
-			}
-		}
-		if (kur == NULL) {
-			TAILQ_FOREACH(np, &sc->complete_queue_head, entries) {
-				if (np->ucr_context == ur->ucr_context) {
-					kur = np;
-					break;
-				}
-			}
-			if (kur == NULL) {
-				splx(s);
-				return (EINVAL);
-			} else {
-				kur->ucr_status = USBD_CANCELLED;
-			}
-		} else {
-			usbd_abort_transfer(kur->xfer);
-		}
-		splx(s);
-		return (0);
-	}
-
 	case USB_DEVICEINFO:
 	{
 		struct usb_device_info *di = (void *)data;

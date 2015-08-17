@@ -773,7 +773,6 @@ struct usb_device_stats {
 #define USB_DEVICE_GET_FDESC	_IOWR('U', 7, struct usb_device_fdesc)
 #define USB_DEVICE_GET_DDESC	_IOWR('U', 8, struct usb_device_ddesc)
 #define USB_COMPLETED		_IOWR('U', 9, struct usb_ctl_request)
-#define USB_CANCEL		_IOWR('U', 10, struct usb_ctl_request)
 
 /* Generic HID device */
 #define USB_GET_REPORT_DESC	_IOR ('U', 21, struct usb_ctl_report_desc)
