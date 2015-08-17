@@ -355,56 +355,17 @@ ugen_set_config(struct ugen_softc *sc, int configno)
 	usb_endpoint_descriptor_t *ed;
 	struct ugen_endpoint *sce;
 	int ifaceno, endptno, endpt;
-	int err, dir, i;
+	int err, dir;
 
 	DPRINTFN(1,("ugen_set_config: %s to configno %d, sc=%p\n",
 		    sc->sc_dev.dv_xname, configno, sc));
 
-	/*
-	 * We start at 1, not 0, because we don't care whether the
-	 * control endpoint is open or not. It is always present.
-	 */
-	for (endptno = 1; endptno < USB_MAX_ENDPOINTS; endptno++) {
-		if (!sc->sc_is_open[endptno])
-			continue;
-		for (dir = OUT; dir <= IN; dir++) {
-			sce = &sc->sc_endpoints[endptno][dir];
-			if (sce == NULL || sce->pipeh == NULL)
-				continue;
-			DPRINTFN(5, ("ugenclose: endpt=%d dir=%d sce=%p\n",
-				     endptno, dir, sce));
-
-			usbd_close_pipe(sce->pipeh);
-			sce->pipeh = NULL;
-
-			switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
-			case UE_INTERRUPT:
-				ndflush(&sce->q, sce->q.c_cc);
-				clfree(&sce->q);
-				break;
-			case UE_ISOCHRONOUS:
-				for (i = 0; i < UGEN_NISOREQS; ++i)
-					usbd_free_xfer(sce->isoreqs[i].xfer);
-
-			default:
-				break;
-			}
-
-			if (sce->ibuf != NULL) {
-				free(sce->ibuf, M_USBDEV, 0);
-				sce->ibuf = NULL;
-			}
-		}
-		sc->sc_is_open[endptno] = 0;
-	}
-
+	ugen_close_pipes(sc);
 	usbd_abort_pipe(dev->default_pipe);
-
 	while ((ur = TAILQ_FIRST(&sc->submit_queue_head))) {
 		TAILQ_REMOVE(&sc->submit_queue_head, ur, entries);
 		free(ur, M_TEMP, sizeof(*ur));
 	}
-
 	while ((ur = TAILQ_FIRST(&sc->complete_queue_head))) {
 		TAILQ_REMOVE(&sc->complete_queue_head, ur, entries);
 		free(ur, M_TEMP, sizeof(*ur));
@@ -680,6 +641,7 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 		}
 	}
 	sc->sc_is_open[endpt] = 0;
+
 	return (0);
 }
 
