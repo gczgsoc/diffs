@@ -1217,7 +1217,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		splx(s);
 
 		xfer = kur->xfer;
-		if (kur->ucr_status == USBD_NORMAL_COMPLETION) {
+		if (kur->ucr_status == USBD_NORMAL_COMPLETION ||
+		    kur->ucr_status == USBD_SHORT_XFER) {
 			len = kur->ucr_actlen;
 			if (len != 0) {
 				iov.iov_base = (caddr_t)kur->ucr_data;
