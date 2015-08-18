@@ -355,16 +355,6 @@ void
 usbd_abort_transfer(struct usbd_xfer *xfer) {
 	struct usbd_pipe *pipe = xfer->pipe;
 
-#ifdef DIAGNOSTIC
-	if (pipe == NULL) {
-		printf("usbd_abort_transfer: pipe == NULL\n");
-		return;
-	}
-	if (pipe->methods == NULL || pipe->methods->abort == NULL) {
-		printf("usbd_abort_transfer: pipe=%p no abort method\n", pipe);
-		return;
-	}
-#endif
 	pipe->methods->abort(xfer);
 }
 
