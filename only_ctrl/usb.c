@@ -165,7 +165,9 @@ usbpoll(dev_t dev, int events, struct proc *p)
 	return (revents);
 }
 
-void usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
+void
+usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
+{
 	struct usb_request_block *ur = priv;
 	struct usb_softc *sc = ur->ucr_sc;
 
