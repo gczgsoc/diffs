@@ -24,18 +24,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-//#include <sys/types.h>
-//#include <sys/ioctl.h>
-//#include <sys/audioio.h>
-//#include <string.h>
 #include <fcntl.h>
-//#include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
-//#include <math.h>
 #include <unistd.h>
 #include <errno.h>
-//#include <limits.h>
 #include <poll.h>
 
 #include <dev/usb/usb.h>
