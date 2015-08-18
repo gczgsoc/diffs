@@ -1183,8 +1183,10 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EIO);
 		}
 		sce = &sc->sc_endpoints[ur->ucr_endpt][IN];
-		if (sce == NULL)
-			printf("something is wrong\n");
+		if (sce == NULL) {
+			spx(s);
+			return (EIO);
+		}
 		TAILQ_INSERT_TAIL(&sce->submit_queue_head, kur, entries);
 		splx(s);
 		return (error);
@@ -1203,8 +1205,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int error = 0;
 
 		sce = &sc->sc_endpoints[endpt][IN];
-		//if (sce == 0 || sce->edesc == 0)
-		if (sce == 0)
+		if (sce == NULL)
 			return (ENXIO);
 		s = splusb();
 		kur = TAILQ_FIRST(&sce->complete_queue_head);
@@ -1253,8 +1254,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int s;
 
 		sce = &sc->sc_endpoints[endpt][IN];
-		//if (sce == 0 || sce->edesc == 0)
-		if (sce == 0)
+		if (sce == NULL)
 			return (ENXIO);
 		s = splusb();
 		kur = NULL;
