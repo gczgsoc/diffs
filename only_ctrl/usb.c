@@ -98,7 +98,7 @@ struct usb_softc {
 
 	struct timeval	 sc_ptime;
 
-	TAILQ_HEAD(, usb_ctl_request) complete_queue_head;
+	TAILQ_HEAD(, usb_request_block) complete_queue_head;
 	struct selinfo rsel;
 };
 
@@ -166,7 +166,7 @@ usbpoll(dev_t dev, int events, struct proc *p)
 }
 
 void usb_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s) {
-	struct usb_ctl_request *ur = priv;
+	struct usb_request_block *ur = priv;
 	struct usb_softc *sc = ur->ucr_sc;
 
 	ur->ucr_status = xfer->status;
@@ -647,8 +647,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 #endif /* USB_DEBUG */
 	case USB_REQUEST:
 	{
-		struct usb_ctl_request *ur = (void *)data;
-		struct usb_ctl_request *kur;
+		struct usb_request_block *ur = (void *)data;
+		struct usb_request_block *kur;
 		int len = ur->ucr_actlen;
 		struct usbd_xfer *xfer;
 		struct iovec iov;
@@ -767,8 +767,8 @@ usbioctl(dev_t devt, u_long cmd, caddr_t data, int flag, struct proc *p)
 	}
 	case USB_COMPLETED:
 	{
-		struct usb_ctl_request *ur = (void *)data;
-		struct usb_ctl_request *kur;
+		struct usb_request_block *ur = (void *)data;
+		struct usb_request_block *kur;
 		struct usbd_xfer *xfer;
 		struct uio uio;
 		struct iovec iov;

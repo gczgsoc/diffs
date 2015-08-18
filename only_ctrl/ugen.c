@@ -93,8 +93,8 @@ struct ugen_endpoint {
 		void *dmabuf;
 		u_int16_t sizes[UGEN_NISORFRMS];
 	} isoreqs[UGEN_NISOREQS];
-	TAILQ_HEAD(, usb_ctl_request) submit_queue_head;
-	TAILQ_HEAD(, usb_ctl_request) complete_queue_head;
+	TAILQ_HEAD(, usb_request_block) submit_queue_head;
+	TAILQ_HEAD(, usb_request_block) complete_queue_head;
 };
 
 struct ugen_softc {
@@ -141,7 +141,7 @@ const struct cfattach ugen_ca = {
 void
 ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 {
-	struct usb_ctl_request *ur = priv;
+	struct usb_request_block *ur = priv;
 	struct ugen_softc *sc = ur->ucr_sc;
 	struct ugen_endpoint *sce;
 
@@ -440,7 +440,7 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 {
 	struct ugen_endpoint *sce;
 	struct usbd_device *dev = sc->sc_udev;
-	struct usb_ctl_request *ur;
+	struct usb_request_block *ur;
 	int dir, i;
 
 #ifdef DIAGNOSTIC
@@ -1044,8 +1044,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		return (0);
 	case USB_DO_REQUEST:
 	{
-		struct usb_ctl_request *ur = (void *)addr;
-		struct usb_ctl_request *kur;
+		struct usb_request_block *ur = (void *)addr;
+		struct usb_request_block *kur;
 		int len = ur->ucr_actlen;
 		struct usbd_xfer *xfer;
 		struct iovec iov;
@@ -1184,7 +1184,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		}
 		sce = &sc->sc_endpoints[ur->ucr_endpt][IN];
 		if (sce == NULL) {
-			spx(s);
+			splx(s);
 			return (EIO);
 		}
 		TAILQ_INSERT_TAIL(&sce->submit_queue_head, kur, entries);
@@ -1193,8 +1193,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 	}
 	case USB_GET_COMPLETED:
 	{
-		struct usb_ctl_request *ur = (void *)addr;
-		struct usb_ctl_request *kur;
+		struct usb_request_block *ur = (void *)addr;
+		struct usb_request_block *kur;
 		struct ugen_endpoint *sce;
 		struct usbd_xfer *xfer;
 		struct uio uio;
@@ -1246,9 +1246,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 	}
 	case USB_DO_CANCEL:
 	{
-		struct usb_ctl_request *ur = (void *)addr;
-		struct usb_ctl_request *kur;
-		struct usb_ctl_request *np;
+		struct usb_request_block *ur = (void *)addr;
+		struct usb_request_block *kur;
+		struct usb_request_block *np;
 		struct ugen_endpoint *sce;
 		int err = 0;
 		int s;

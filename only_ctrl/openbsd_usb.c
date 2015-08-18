@@ -444,7 +444,7 @@ obsd_set_interface_altsetting(struct libusb_device_handle *handle, int iface,
 int
 obsd_clear_halt(struct libusb_device_handle *handle, unsigned char endpoint)
 {
-	struct usb_ctl_request req;
+	struct usb_request_block req;
 	int fd, err;
 
 	if ((fd = _bus_open(handle->dev->bus_number)) < 0)
@@ -544,7 +544,7 @@ int
 obsd_cancel_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
-	struct usb_ctl_request req;
+	struct usb_request_block req;
 	struct handle_priv *hpriv;
 	struct device_priv *dpriv;
 	int fd;
@@ -612,7 +612,7 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 	struct handle_priv *hpriv = NULL;
 	struct device_priv *dpriv = NULL;
 	struct usbi_transfer *itransfer;
-	struct usb_ctl_request req;
+	struct usb_request_block req;
 	struct pollfd *pollfd;
 	int fd;
 	int e;
@@ -824,7 +824,7 @@ _do_control_transfer(struct usbi_transfer *itransfer)
 	struct libusb_transfer *transfer;
 	struct libusb_control_setup *setup;
 	struct device_priv *dpriv;
-	struct usb_ctl_request req;
+	struct usb_request_block req;
 	int err, fd;
 
 	transfer = USBI_TRANSFER_TO_LIBUSB_TRANSFER(itransfer);
@@ -917,7 +917,7 @@ _do_gen_transfer(struct usbi_transfer *itransfer)
 {
 	struct libusb_transfer *transfer;
 	struct device_priv *dpriv;
-	struct usb_ctl_request req;
+	struct usb_request_block req;
 	int fd;
 
 	usbi_dbg("");

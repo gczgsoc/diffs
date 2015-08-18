@@ -635,7 +635,7 @@ typedef struct usb_port_status usb_port_status_t;
 
 /*** ioctl() related stuff ***/
 
-struct usb_ctl_request {
+struct usb_request_block {
 	int	ucr_addr;
 	int	ucr_endpt;
 	usb_device_request_t ucr_request;
@@ -653,7 +653,7 @@ struct usb_ctl_request {
 	void 	*ucr_sc;
 	void	*ucr_context;
 	void *xfer;
-	TAILQ_ENTRY(usb_ctl_request) entries;
+	TAILQ_ENTRY(usb_request_block) entries;
 };
 
 struct usb_alt_interface {
@@ -764,7 +764,7 @@ struct usb_device_stats {
 };
 
 /* USB controller */
-#define USB_REQUEST		_IOWR('U', 1, struct usb_ctl_request)
+#define USB_REQUEST		_IOWR('U', 1, struct usb_request_block)
 #define USB_SETDEBUG		_IOW ('U', 2, unsigned int)
 #define USB_DISCOVER		_IO  ('U', 3)
 #define USB_DEVICEINFO		_IOWR('U', 4, struct usb_device_info)
@@ -772,7 +772,7 @@ struct usb_device_stats {
 #define USB_DEVICE_GET_CDESC	_IOWR('U', 6, struct usb_device_cdesc)
 #define USB_DEVICE_GET_FDESC	_IOWR('U', 7, struct usb_device_fdesc)
 #define USB_DEVICE_GET_DDESC	_IOWR('U', 8, struct usb_device_ddesc)
-#define USB_COMPLETED		_IOWR('U', 9, struct usb_ctl_request)
+#define USB_COMPLETED		_IOWR('U', 9, struct usb_request_block)
 
 /* Generic HID device */
 #define USB_GET_REPORT_DESC	_IOR ('U', 21, struct usb_ctl_report_desc)
@@ -793,12 +793,12 @@ struct usb_device_stats {
 #define USB_GET_ENDPOINT_DESC	_IOWR('U', 108, struct usb_endpoint_desc)
 #define USB_GET_FULL_DESC	_IOWR('U', 109, struct usb_full_desc)
 #define USB_GET_STRING_DESC	_IOWR('U', 110, struct usb_string_desc)
-#define USB_DO_REQUEST		_IOWR('U', 111, struct usb_ctl_request)
+#define USB_DO_REQUEST		_IOWR('U', 111, struct usb_request_block)
 #define USB_GET_DEVICEINFO	_IOR ('U', 112, struct usb_device_info)
 #define USB_SET_SHORT_XFER	_IOW ('U', 113, int)
 #define USB_SET_TIMEOUT		_IOW ('U', 114, int)
-#define USB_GET_COMPLETED	_IOWR('U', 115, struct usb_ctl_request)
-#define USB_DO_CANCEL		_IOWR('U', 116, struct usb_ctl_request)
+#define USB_GET_COMPLETED	_IOWR('U', 115, struct usb_request_block)
+#define USB_DO_CANCEL		_IOWR('U', 116, struct usb_request_block)
 
 /* Modem device */
 #define USB_GET_CM_OVER_DATA	_IOR ('U', 130, int)
