@@ -352,7 +352,8 @@ usbd_transfer(struct usbd_xfer *xfer)
 }
 
 void
-usbd_abort_transfer(struct usbd_xfer *xfer) {
+usbd_abort_transfer(struct usbd_xfer *xfer)
+{
 	struct usbd_pipe *pipe = xfer->pipe;
 
 	pipe->methods->abort(xfer);
