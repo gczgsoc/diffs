@@ -266,6 +266,10 @@ ugen_set_config(struct ugen_softc *sc, int configno)
 			sce->iface = iface;
 		}
 	}
+	sce = &sc->sc_endpoints[USB_CONTROL_ENDPOINT][IN];
+	sce->sc = sc;
+	sce->edesc = &dev->def_ep_desc;
+	sce->iface = NULL;
 	return (0);
 }
 
@@ -302,6 +306,8 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 	TAILQ_INIT(&sce->submit_queue_head);
 	TAILQ_INIT(&sce->complete_queue_head);
 	if (endpt == USB_CONTROL_ENDPOINT) {
+		if (sce == 0 || sce->edesc == 0)
+			return (ENXIO);
 		sc->sc_is_open[USB_CONTROL_ENDPOINT] = 1;
 		return (0);
 	}
@@ -1077,13 +1083,13 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EINVAL);
 		if (usbd_is_dying(sc->sc_udev))
 			return (EIO);
+		if (!(sc->sc_is_open[ur->ucr_endpt]))
+			return (EIO);
 		if (ur->ucr_endpt != USB_CONTROL_ENDPOINT) {
 			dir = ur->ucr_read ? IN : OUT;
 			sce = &sc->sc_endpoints[ur->ucr_endpt][dir];
 			if (sce == 0 || sce->edesc == 0)
 				return (ENXIO);
-			if (!(sc->sc_is_open[ur->ucr_endpt]))
-				return (EIO);
 			if (sce->pipeh == NULL)
 				return (EIO);
 		}
@@ -1205,7 +1211,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int error = 0;
 
 		sce = &sc->sc_endpoints[endpt][IN];
-		if (sce == NULL)
+		if (sce == 0 || sce->edesc == 0)
 			return (ENXIO);
 		s = splusb();
 		kur = TAILQ_FIRST(&sce->complete_queue_head);
@@ -1255,7 +1261,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		int s;
 
 		sce = &sc->sc_endpoints[endpt][IN];
-		if (sce == NULL)
+		if (sce == 0 || sce->edesc == 0)
 			return (ENXIO);
 		s = splusb();
 		kur = NULL;
@@ -1479,11 +1485,11 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	if (sce == NULL)
 		return (POLLERR);
 #ifdef DIAGNOSTIC
+	if (!sce->edesc) {
+		printf("ugenpoll: no edesc\n");
+		return (POLLERR);
+	}
 	if (UGENENDPOINT(dev) != USB_CONTROL_ENDPOINT) {
-		if (!sce->edesc) {
-			printf("ugenpoll: no edesc\n");
-			return (POLLERR);
-		}
 		if (!sce->pipeh) {
 			printf("ugenpoll: no pipe\n");
 			return (POLLERR);
@@ -1491,16 +1497,6 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	}
 #endif
 	s = splusb();
-	if (UGENENDPOINT(dev) == USB_CONTROL_ENDPOINT) {
-		if (events & (POLLIN | POLLRDNORM)) {
-			if (!TAILQ_EMPTY(&sce->complete_queue_head))
-				revents |= events & (POLLIN | POLLRDNORM);
-			else
-				selrecord(p, &sce->rsel);
-		}
-		splx(s);
-		return (revents);
-	}
 	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 	case UE_INTERRUPT:
 	case UE_ISOCHRONOUS:
