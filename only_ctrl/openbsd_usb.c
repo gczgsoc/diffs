@@ -547,7 +547,7 @@ obsd_cancel_transfer(struct usbi_transfer *itransfer)
 	struct usb_request_block req;
 	struct handle_priv *hpriv;
 	struct device_priv *dpriv;
-	int fd;
+	int fd = -1;
 	int err = 0;
 
 	usbi_dbg("");
@@ -614,7 +614,7 @@ obsd_handle_events(struct libusb_context *ctx, struct pollfd *fds, nfds_t nfds,
 	struct usbi_transfer *itransfer;
 	struct usb_request_block req;
 	struct pollfd *pollfd;
-	int fd;
+	int fd = -1;
 	int e;
 	int i, err = 0;
 	int error_code;
