@@ -147,6 +147,7 @@ ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 
 	sce = &sc->sc_endpoints[urb->urb_endpt][IN];
 	urb->urb_status = xfer->status;
+	urb->urb_actlen = xfer->actlen;
 	TAILQ_REMOVE(&sce->submit_queue_head, urb, entries);
 	TAILQ_INSERT_TAIL(&sce->complete_queue_head, urb, entries);
 	selwakeup(&sce->rsel);
@@ -1145,6 +1146,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 				return (error);
 			}
 			ur->urb_actlen = xfer->actlen;
+			ur->urb_status = xfer->status;
 			len = ur->urb_actlen;
 			if (len != 0) {
 				iov.iov_base = (caddr_t)ur->urb_data;
