@@ -1,5 +1,5 @@
 /*
- * Copyright (c) ...
+ * Copyright (c) 2015 Grant Czajkowski <czajkow2@illinois.edu>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <err.h>
 #include <errno.h>
 #include <poll.h>
 
@@ -58,18 +59,18 @@ test_sync_control(char *dev)
 	if ((fd = open(dev, O_RDWR)) < 0)
 		return (-1);
 
-	urb.ucr_addr = 0;
-	urb.ucr_endpt = 0;
-	urb.ucr_request.bmRequestType = UT_READ_DEVICE;
-	urb.ucr_request.bRequest = UR_GET_STATUS;
-	USETW(urb.ucr_request.wValue, 0);
-	USETW(urb.ucr_request.wIndex, 0);
-	USETW(urb.ucr_request.wLength, 2);
-	urb.ucr_data = &buf;
-	urb.ucr_flags = USBD_SYNCHRONOUS;
-	urb.ucr_actlen = 2;
-	urb.ucr_timeout = USBD_DEFAULT_TIMEOUT;
-	urb.ucr_read = 1;
+	urb.urb_addr = 0;
+	urb.urb_endpt = 0;
+	urb.urb_request.bmRequestType = UT_READ_DEVICE;
+	urb.urb_request.bRequest = UR_GET_STATUS;
+	USETW(urb.urb_request.wValue, 0);
+	USETW(urb.urb_request.wIndex, 0);
+	USETW(urb.urb_request.wLength, 2);
+	urb.urb_data = &buf;
+	urb.urb_flags = USBD_SYNCHRONOUS;
+	urb.urb_actlen = 2;
+	urb.urb_timeout = USBD_DEFAULT_TIMEOUT;
+	urb.urb_read = 1;
 
 	if (ioctl(fd, USB_DO_REQUEST, &urb)) {
 		err = errno;
@@ -93,18 +94,18 @@ test_async_control(char *dev)
 	if ((fd = open(dev, O_RDWR)) < 0)
 		return (-1);
 
-	urb.ucr_addr = 0;
-	urb.ucr_endpt = 0;
-	urb.ucr_request.bmRequestType = UT_READ_DEVICE;
-	urb.ucr_request.bRequest = UR_GET_STATUS;
-	USETW(urb.ucr_request.wValue, 0);
-	USETW(urb.ucr_request.wIndex, 0);
-	USETW(urb.ucr_request.wLength, 2);
-	urb.ucr_data = &buf;
-	urb.ucr_flags = 0;
-	urb.ucr_actlen = 2;
-	urb.ucr_timeout = USBD_DEFAULT_TIMEOUT;
-	urb.ucr_read = 1;
+	urb.urb_addr = 0;
+	urb.urb_endpt = 0;
+	urb.urb_request.bmRequestType = UT_READ_DEVICE;
+	urb.urb_request.bRequest = UR_GET_STATUS;
+	USETW(urb.urb_request.wValue, 0);
+	USETW(urb.urb_request.wIndex, 0);
+	USETW(urb.urb_request.wLength, 2);
+	urb.urb_data = &buf;
+	urb.urb_flags = 0;
+	urb.urb_actlen = 2;
+	urb.urb_timeout = USBD_DEFAULT_TIMEOUT;
+	urb.urb_read = 1;
 
 	if (ioctl(fd, USB_DO_REQUEST, &urb)) {
 		err = errno;
@@ -156,14 +157,10 @@ main(int argc, char **argv)
 		usage();
 
 	if (test_sync_control(dev))
-		printf("fail\n");
-	else
-		printf("pass\n");
+		err(1, "synchronous control transfer");
 
 	if (test_async_control(dev))
-		printf("fail\n");
-	else
-		printf("pass\n");
+		err(1, "asynchronous control transfer");
 
 	exit(0);
 }
