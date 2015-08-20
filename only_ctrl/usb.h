@@ -636,23 +636,23 @@ typedef struct usb_port_status usb_port_status_t;
 /*** ioctl() related stuff ***/
 
 struct usb_request_block {
-	int	ucr_addr;
-	int	ucr_endpt;
-	usb_device_request_t ucr_request;
-	void	*ucr_data;
-	int	ucr_flags;
+	usb_device_request_t 	 urb_request;
+	int	 		 urb_addr;
+	int		 	 urb_endpt;
+	void			*urb_data;
+	int			 urb_flags;
 #define USBD_NO_COPY		0x01	/* do not copy data to DMA buffer */
 #define USBD_SYNCHRONOUS	0x02	/* wait for completion */
 #define USBD_SHORT_XFER_OK	0x04	/* allow short reads */
 #define USBD_FORCE_SHORT_XFER	0x08	/* force last short packet on write */
 #define USBD_CATCH		0x10	/* catch signals while sleeping */
-	int	ucr_actlen;		/* actual length transferred */
-	int 	ucr_timeout;
-	int 	ucr_status;
-	int 	ucr_read;
-	void 	*ucr_sc;
-	void	*ucr_context;
-	void *xfer;
+	int 			 urb_read;
+	int 			 urb_timeout;
+	int			 urb_actlen; /* actual length transferred */
+	int 			 urb_status;
+	void 			*urb_sc;
+	void			*urb_context;
+	void 			*urb_xfer;
 	TAILQ_ENTRY(usb_request_block) entries;
 };
 

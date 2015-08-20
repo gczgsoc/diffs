@@ -452,18 +452,18 @@ obsd_clear_halt(struct libusb_device_handle *handle, unsigned char endpoint)
 
 	usbi_dbg("");
 
-	req.ucr_addr = handle->dev->device_address;
-	req.ucr_endpt = endpoint;
-	req.ucr_request.bmRequestType = UT_WRITE_ENDPOINT;
-	req.ucr_request.bRequest = UR_CLEAR_FEATURE;
-	USETW(req.ucr_request.wValue, UF_ENDPOINT_HALT);
-	USETW(req.ucr_request.wIndex, endpoint);
-	USETW(req.ucr_request.wLength, 0);
-	req.ucr_data = NULL;
-	req.ucr_actlen = 0;
-	req.ucr_flags = USBD_SYNCHRONOUS;
-	req.ucr_timeout = USBD_DEFAULT_TIMEOUT;
-	req.ucr_read = 0;
+	req.urb_addr = handle->dev->device_address;
+	req.urb_endpt = endpoint;
+	req.urb_request.bmRequestType = UT_WRITE_ENDPOINT;
+	req.urb_request.bRequest = UR_CLEAR_FEATURE;
+	USETW(req.urb_request.wValue, UF_ENDPOINT_HALT);
+	USETW(req.urb_request.wIndex, endpoint);
+	USETW(req.urb_request.wLength, 0);
+	req.urb_data = NULL;
+	req.urb_actlen = 0;
+	req.urb_flags = USBD_SYNCHRONOUS;
+	req.urb_timeout = USBD_DEFAULT_TIMEOUT;
+	req.urb_read = 0;
 
 	if (ioctl(fd, USB_REQUEST, &req) < 0) {
 		err = errno;
@@ -589,7 +589,7 @@ obsd_cancel_transfer(struct usbi_transfer *itransfer)
 	if (err)
 		return (err);
 
-	req.ucr_context = itransfer;
+	req.urb_context = itransfer;
 	if ((ioctl(fd, USB_DO_CANCEL, &req)))
 		return _errno_to_libusb(errno);
 
@@ -676,12 +676,12 @@ repeat:
 				err = 0;
 				break;
 			}
-			itransfer = req.ucr_context;
+			itransfer = req.urb_context;
 
-			switch(req.ucr_status) {
+			switch(req.urb_status) {
 			case USBD_NORMAL_COMPLETION:
 				usbi_mutex_lock(&itransfer->lock);
-				itransfer->transferred += req.ucr_actlen;
+				itransfer->transferred += req.urb_actlen;
 				usbi_dbg("transferred %d", itransfer->transferred);
 				usbi_mutex_unlock(&itransfer->lock);
 
@@ -837,25 +837,25 @@ _do_control_transfer(struct usbi_transfer *itransfer)
 	    libusb_le16_to_cpu(setup->wIndex),
 	    libusb_le16_to_cpu(setup->wLength), transfer->timeout);
 
-	req.ucr_addr = transfer->dev_handle->dev->device_address;
-	req.ucr_endpt = UE_GET_ADDR(transfer->endpoint);
-	req.ucr_request.bmRequestType = setup->bmRequestType;
-	req.ucr_request.bRequest = setup->bRequest;
+	req.urb_addr = transfer->dev_handle->dev->device_address;
+	req.urb_endpt = UE_GET_ADDR(transfer->endpoint);
+	req.urb_request.bmRequestType = setup->bmRequestType;
+	req.urb_request.bRequest = setup->bRequest;
 	/* Don't use USETW, libusb already deals with the endianness */
-	(*(uint16_t *)req.ucr_request.wValue) = setup->wValue;
-	(*(uint16_t *)req.ucr_request.wIndex) = setup->wIndex;
-	(*(uint16_t *)req.ucr_request.wLength) = setup->wLength;
-	req.ucr_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
-	req.ucr_flags = 0;
+	(*(uint16_t *)req.urb_request.wValue) = setup->wValue;
+	(*(uint16_t *)req.urb_request.wIndex) = setup->wIndex;
+	(*(uint16_t *)req.urb_request.wLength) = setup->wLength;
+	req.urb_data = transfer->buffer + LIBUSB_CONTROL_SETUP_SIZE;
+	req.urb_flags = 0;
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-		req.ucr_flags = USBD_SHORT_XFER_OK;
-	req.ucr_actlen = setup->wLength;
-	req.ucr_timeout = transfer->timeout;
-	req.ucr_read = setup->bmRequestType & UT_READ;
-	req.ucr_context = itransfer;
+		req.urb_flags = USBD_SHORT_XFER_OK;
+	req.urb_actlen = setup->wLength;
+	req.urb_timeout = transfer->timeout;
+	req.urb_read = setup->bmRequestType & UT_READ;
+	req.urb_context = itransfer;
 
 	if (dpriv->devname == NULL) {
-		req.ucr_flags |= USBD_SYNCHRONOUS;
+		req.urb_flags |= USBD_SYNCHRONOUS;
 		if ((fd = _bus_open(transfer->dev_handle->dev->bus_number)) < 0)
 			return _errno_to_libusb(errno);
 		if (ioctl(fd, USB_REQUEST, &req)) {
@@ -864,7 +864,7 @@ _do_control_transfer(struct usbi_transfer *itransfer)
 			return _errno_to_libusb(err);
 		}
 		close(fd);
-		itransfer->transferred = req.ucr_actlen;
+		itransfer->transferred = req.urb_actlen;
 		usbi_signal_transfer_completion(itransfer);
 	} else {
 		if (ioctl(dpriv->fd, USB_DO_REQUEST, &req)) {
@@ -931,18 +931,18 @@ _do_gen_transfer(struct usbi_transfer *itransfer)
 	if ((fd = _access_endpoint(transfer)) < 0)
 		return _errno_to_libusb(errno);
 
-	req.ucr_addr = transfer->dev_handle->dev->device_address;
-	req.ucr_endpt = UE_GET_ADDR(transfer->endpoint);
-	req.ucr_data = transfer->buffer;
-	req.ucr_flags = 0;
+	req.urb_addr = transfer->dev_handle->dev->device_address;
+	req.urb_endpt = UE_GET_ADDR(transfer->endpoint);
+	req.urb_data = transfer->buffer;
+	req.urb_flags = 0;
 	if ((transfer->flags & LIBUSB_TRANSFER_SHORT_NOT_OK) == 0)
-		req.ucr_flags |= USBD_SHORT_XFER_OK;
+		req.urb_flags |= USBD_SHORT_XFER_OK;
 	if (transfer->flags & LIBUSB_TRANSFER_ADD_ZERO_PACKET)
-		req.ucr_flags |= USBD_FORCE_SHORT_XFER;
-	req.ucr_actlen = transfer->length;
-	req.ucr_timeout = transfer->timeout;
-	req.ucr_read = IS_XFERIN(transfer);
-	req.ucr_context = itransfer;
+		req.urb_flags |= USBD_FORCE_SHORT_XFER;
+	req.urb_actlen = transfer->length;
+	req.urb_timeout = transfer->timeout;
+	req.urb_read = IS_XFERIN(transfer);
+	req.urb_context = itransfer;
 	if (ioctl(fd, USB_DO_REQUEST, &req))
 		return _errno_to_libusb(errno);
 
