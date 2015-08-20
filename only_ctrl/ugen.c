@@ -1066,17 +1066,18 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EINVAL);
 		if (ur->urb_endpt != endpt)
 			return (EINVAL);
+		/* Avoid requests that would damage the bus integrity. */
+		if ((ur->urb_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->urb_request.bRequest == UR_SET_ADDRESS) ||
+		    (ur->urb_request.bmRequestType == UT_WRITE_DEVICE &&
+		     ur->urb_request.bRequest == UR_SET_CONFIG) ||
+		    (ur->urb_request.bmRequestType == UT_WRITE_INTERFACE &&
+		     ur->urb_request.bRequest == UR_SET_INTERFACE))
+			if (ur->urb_endpt == USB_CONTROL_ENDPOINT)
+				return (EINVAL);
 		if (ur->urb_endpt == USB_CONTROL_ENDPOINT) {
 			if (!(flag & FWRITE))
 				return (EPERM);
-			/* Avoid requests that would damage the bus integrity. */
-			if ((ur->urb_request.bmRequestType == UT_WRITE_DEVICE &&
-			     ur->urb_request.bRequest == UR_SET_ADDRESS) ||
-			    (ur->urb_request.bmRequestType == UT_WRITE_DEVICE &&
-			     ur->urb_request.bRequest == UR_SET_CONFIG) ||
-			    (ur->urb_request.bmRequestType == UT_WRITE_INTERFACE &&
-			     ur->urb_request.bRequest == UR_SET_INTERFACE))
-				return (EINVAL);
 			if (len < 0 || len > 32767)
 				return (EINVAL);
 		}
@@ -1132,8 +1133,7 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			}
 			err = usbd_transfer(xfer);
 			if (err) {
-				if (err == USBD_STALLED &&
-				    ur->urb_endpt != USB_CONTROL_ENDPOINT)
+				if (err == USBD_STALLED && sce->pipeh)
 					usbd_clear_endpoint_stall(sce->pipeh);
 
 				if (err == USBD_INTERRUPTED)
@@ -1175,8 +1175,9 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		kurb->urb_xfer = xfer;
 		if (ur->urb_endpt == USB_CONTROL_ENDPOINT) {
 			usbd_setup_default_xfer(xfer, sc->sc_udev,
-			    kurb, ur->urb_timeout, &ur->urb_request, NULL, len,
-			    ur->urb_flags | USBD_NO_COPY, ugen_async_callback);
+			    kurb, ur->urb_timeout, &ur->urb_request,
+			    NULL, len, ur->urb_flags | USBD_NO_COPY,
+			    ugen_async_callback);
 		} else {
 			usbd_setup_xfer(xfer, sce->pipeh, kurb,
 			    NULL, len, ur->urb_flags | USBD_NO_COPY,
@@ -1243,7 +1244,8 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 					buf = KERNADDR(&xfer->dmabuf, 0);
 					error = uiomovei(buf, len, &uio);
 					if (error)
-						kurb->urb_status = USBD_IOERROR;
+						kurb->urb_status =
+						    USBD_IOERROR;
 				}
 			}
 		}
