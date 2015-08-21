@@ -242,6 +242,7 @@ usbd_status	usbd_fill_iface_data(struct usbd_device *, int, int);
 
 usbd_status	usb_insert_transfer(struct usbd_xfer *);
 void		usb_transfer_complete(struct usbd_xfer *);
+void		usb_transfer_remove(struct usbd_xfer *);
 int		usbd_detach(struct usbd_device *, struct device *);
 
 /* Routines from usb.c */

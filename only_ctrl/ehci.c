@@ -124,6 +124,7 @@ void		ehci_idone(struct usbd_xfer *);
 void		ehci_isoc_idone(struct usbd_xfer *);
 void		ehci_timeout(void *);
 void		ehci_timeout_task(void *);
+void		ehci_abort_task(void *);
 void		ehci_intrlist_timeout(void *);
 
 struct usbd_xfer *ehci_allocx(struct usbd_bus *);
@@ -2621,7 +2622,7 @@ ehci_abort_xfer(struct usbd_xfer *xfer, usbd_status status)
 #ifdef DIAGNOSTIC
 		ex->isdone = 1;
 #endif
-		usb_transfer_complete(xfer);
+		usb_transfer_remove(xfer);
 		splx(s);
 		return;
 	}
@@ -2787,6 +2788,17 @@ ehci_abort_isoc_xfer(struct usbd_xfer *xfer, usbd_status status)
 	tsleep(&sc->sc_softwake, PZERO, "ehciab", 0);
 
 	usb_transfer_complete(xfer);
+}
+
+void
+ehci_abort_task(void *addr)
+{
+	struct usbd_xfer *xfer = addr;
+	int s;
+
+	s = splusb();
+	ehci_abort_xfer(xfer, USBD_CANCELLED);
+	splx(s);
 }
 
 void
@@ -3067,7 +3079,16 @@ ehci_device_bulk_start(struct usbd_xfer *xfer)
 void
 ehci_device_bulk_abort(struct usbd_xfer *xfer)
 {
-	ehci_abort_xfer(xfer, USBD_CANCELLED);
+	struct ehci_softc *sc = (struct ehci_softc *)xfer->device->bus;
+
+	if (sc->sc_bus.dying) {
+		ehci_abort_xfer(xfer, USBD_CANCELLED);
+		return;
+	}
+
+        usb_init_task(&xfer->abort_task, ehci_abort_task, xfer,
+            USB_TASK_TYPE_ABORT);
+        usb_add_task(xfer->device, &xfer->abort_task);
 }
 
 /*

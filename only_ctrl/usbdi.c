@@ -698,9 +698,6 @@ void
 usb_transfer_complete(struct usbd_xfer *xfer)
 {
 	struct usbd_pipe *pipe = xfer->pipe;
-	struct usbd_xfer *np;
-	struct usbd_xfer *prev;
-	struct usbd_xfer *temp;
 	int polling;
 
 	SPLUSBCHECK;
@@ -747,18 +744,13 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 
 	if (!pipe->repeat) {
 		/* Remove request from queue. */
+#ifdef DIAGNOSTIC
+		if (xfer != SIMPLEQ_FIRST(&pipe->queue))
+			printf("usb_transfer_complete: bad dequeue %p != %p\n",
+			    xfer, SIMPLEQ_FIRST(&pipe->queue));
 		xfer->busy_free = XFER_FREE;
-		prev = NULL;
-		SIMPLEQ_FOREACH_SAFE(np, &pipe->queue, next, temp) {
-			if (np == xfer) {
-				if (prev)
-					SIMPLEQ_REMOVE_AFTER(&pipe->queue, prev, next);
-				else
-					SIMPLEQ_REMOVE_HEAD(&pipe->queue, next);
-				break;
-			}
-			prev = np;
-		}
+#endif
+		SIMPLEQ_REMOVE_HEAD(&pipe->queue, next);
 	}
 	DPRINTFN(5,("usb_transfer_complete: repeat=%d new head=%p\n",
 	    pipe->repeat, SIMPLEQ_FIRST(&pipe->queue)));
@@ -774,6 +766,95 @@ usb_transfer_complete(struct usbd_xfer *xfer)
 		    xfer->actlen, xfer->length));
 		xfer->status = USBD_SHORT_XFER;
 	}
+
+	if (pipe->repeat) {
+		if (xfer->callback)
+			xfer->callback(xfer, xfer->priv, xfer->status);
+		pipe->methods->done(xfer);
+	} else {
+		pipe->methods->done(xfer);
+		if (xfer->callback)
+			xfer->callback(xfer, xfer->priv, xfer->status);
+	}
+
+	/*
+	 * If we already got an I/O error that generally means the
+	 * device is gone or not responding, so don't try to enqueue
+	 * a new transfer as it will more likely results in the same
+	 * error.
+	 */
+	if (xfer->status == USBD_IOERROR)
+		pipe->repeat = 0;
+
+	if ((xfer->flags & USBD_SYNCHRONOUS) && !polling)
+		wakeup(xfer);
+
+	if (!pipe->repeat) {
+		/* XXX should we stop the queue on all errors? */
+		if ((xfer->status == USBD_CANCELLED ||
+		     xfer->status == USBD_IOERROR ||
+		     xfer->status == USBD_TIMEOUT) &&
+		    pipe->iface != NULL)		/* not control pipe */
+			pipe->running = 0;
+		else
+			usbd_start_next(pipe);
+	}
+}
+
+/* Called at splusb() */
+void
+usb_transfer_remove(struct usbd_xfer *xfer)
+{
+	struct usbd_pipe *pipe = xfer->pipe;
+	struct usbd_xfer *np;
+	struct usbd_xfer *prev;
+	int polling;
+
+	SPLUSBCHECK;
+
+	DPRINTFN(5, ("usb_transfer_remove: pipe=%p xfer=%p status=%d "
+		     "actlen=%d\n", pipe, xfer, xfer->status, xfer->actlen));
+#ifdef DIAGNOSTIC
+	if (xfer->busy_free != XFER_ONQU) {
+		printf("%s: xfer=%p not on queue\n", __func__, xfer);
+		return;
+	}
+#endif
+
+#ifdef DIAGNOSTIC
+	if (pipe == NULL) {
+		printf("usb_transfer_remove: pipe==0, xfer=%p\n", xfer);
+		return;
+	}
+#endif
+	polling = pipe->device->bus->use_polling;
+	/* XXXX */
+	if (polling)
+		pipe->running = 0;
+
+	/* if we allocated the buffer in usbd_transfer() we free it here. */
+	if (xfer->rqflags & URQ_AUTO_DMABUF) {
+		if (!pipe->repeat) {
+			usb_freemem(pipe->device->bus, &xfer->dmabuf);
+			xfer->rqflags &= ~URQ_AUTO_DMABUF;
+		}
+	}
+
+	/* Remove request from queue. */
+	xfer->busy_free = XFER_FREE;
+	prev = NULL;
+	SIMPLEQ_FOREACH(np, &pipe->queue, next) {
+		if (np == xfer) {
+			if (prev)
+				SIMPLEQ_REMOVE_AFTER(&pipe->queue, prev, next);
+			else
+				SIMPLEQ_REMOVE_HEAD(&pipe->queue, next);
+			break;
+		}
+		prev = np;
+	}
+
+	xfer->done = 1;
 
 	if (pipe->repeat) {
 		if (xfer->callback)
