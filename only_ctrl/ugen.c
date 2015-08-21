@@ -144,8 +144,12 @@ ugen_async_callback(struct usbd_xfer *xfer, void *priv, usbd_status s)
 	struct usb_request_block *urb = priv;
 	struct ugen_softc *sc = urb->urb_sc;
 	struct ugen_endpoint *sce;
+	int dir;
 
-	sce = &sc->sc_endpoints[urb->urb_endpt][IN];
+	dir = urb->urb_read ? IN : OUT;
+	if (urb->urb_endpt == USB_CONTROL_ENDPOINT)
+		dir = IN;
+	sce = &sc->sc_endpoints[urb->urb_endpt][dir];
 	urb->urb_status = xfer->status;
 	urb->urb_actlen = xfer->actlen;
 	TAILQ_REMOVE(&sce->submit_queue_head, urb, entries);
@@ -303,12 +307,12 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 	if (sc->sc_is_open[endpt])
 		return (EBUSY);
 
-	sce = &sc->sc_endpoints[endpt][IN];
-	TAILQ_INIT(&sce->submit_queue_head);
-	TAILQ_INIT(&sce->complete_queue_head);
 	if (endpt == USB_CONTROL_ENDPOINT) {
+		sce = &sc->sc_endpoints[endpt][IN];
 		if (sce == 0 || sce->edesc == 0)
 			return (ENXIO);
+		TAILQ_INIT(&sce->submit_queue_head);
+		TAILQ_INIT(&sce->complete_queue_head);
 		sc->sc_is_open[USB_CONTROL_ENDPOINT] = 1;
 		return (0);
 	}
@@ -319,6 +323,8 @@ ugenopen(dev_t dev, int flag, int mode, struct proc *p)
 			sce = &sc->sc_endpoints[endpt][dir];
 			if (sce == 0 || sce->edesc == 0)
 				return (ENXIO);
+			TAILQ_INIT(&sce->submit_queue_head);
+			TAILQ_INIT(&sce->complete_queue_head);
 		}
 	}
 
@@ -498,13 +504,12 @@ ugen_do_close(struct ugen_softc *sc, int endpt, int flag)
 			free(sce->ibuf, M_USBDEV, 0);
 			sce->ibuf = NULL;
 		}
+		while ((urb = TAILQ_FIRST(&sce->complete_queue_head))) {
+			TAILQ_REMOVE(&sce->complete_queue_head, urb, entries);
+			free(urb, M_TEMP, sizeof(*urb));
+		}
 	}
 	sc->sc_is_open[endpt] = 0;
-	sce = &sc->sc_endpoints[endpt][IN];
-	while ((urb = TAILQ_FIRST(&sce->complete_queue_head))) {
-		TAILQ_REMOVE(&sce->complete_queue_head, urb, entries);
-		free(urb, M_TEMP, sizeof(*urb));
-	}
 
 	return (0);
 }
@@ -1087,14 +1092,15 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			return (EIO);
 		if (!(sc->sc_is_open[ur->urb_endpt]))
 			return (EIO);
-		if (ur->urb_endpt != USB_CONTROL_ENDPOINT) {
-			dir = ur->urb_read ? IN : OUT;
-			sce = &sc->sc_endpoints[ur->urb_endpt][dir];
-			if (sce == 0 || sce->edesc == 0)
-				return (ENXIO);
+		dir = ur->urb_read ? IN : OUT;
+		if (ur->urb_endpt == USB_CONTROL_ENDPOINT)
+			dir = IN;
+		sce = &sc->sc_endpoints[ur->urb_endpt][dir];
+		if (sce == 0 || sce->edesc == 0)
+			return (ENXIO);
+		if (ur->urb_endpt != USB_CONTROL_ENDPOINT)
 			if (sce->pipeh == NULL)
 				return (EIO);
-		}
 		xfer = usbd_alloc_xfer(sc->sc_udev);
 		if (xfer == NULL)
 			return (ENOMEM);
@@ -1191,11 +1197,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 			usbd_free_xfer(xfer);
 			return (EIO);
 		}
-		sce = &sc->sc_endpoints[ur->urb_endpt][IN];
-		if (sce == NULL) {
-			splx(s);
-			return (EIO);
-		}
 		TAILQ_INSERT_TAIL(&sce->submit_queue_head, kurb, entries);
 		splx(s);
 		return (error);
@@ -1210,10 +1211,24 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		struct iovec iov;
 		void *buf;
 		int len;
+		int dir;
 		int s;
 		int error = 0;
 
-		sce = &sc->sc_endpoints[endpt][IN];
+		/* Find an open endpoint with completed urbs. */
+		for (dir = OUT; dir <= IN; dir++) {
+			if (flag & (dir == OUT ? FWRITE : FREAD)) {
+				sce = &sc->sc_endpoints[endpt][dir];
+				if (sce == 0 || sce->edesc == 0)
+					continue;
+				s = splusb();
+				if (!TAILQ_EMPTY(&sce->complete_queue_head)) {
+					splx(s);
+					break;
+				}
+				splx(s);
+			}
+		}
 		if (sce == 0 || sce->edesc == 0)
 			return (ENXIO);
 		s = splusb();
@@ -1224,7 +1239,6 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 		}
 		TAILQ_REMOVE(&sce->complete_queue_head, kurb, entries);
 		splx(s);
-
 		xfer = kurb->urb_xfer;
 		if (kurb->urb_status == USBD_NORMAL_COMPLETION ||
 		    kurb->urb_status == USBD_SHORT_XFER) {
@@ -1257,38 +1271,44 @@ ugen_do_ioctl(struct ugen_softc *sc, int endpt, u_long cmd, caddr_t addr,
 	}
 	case USB_DO_CANCEL:
 	{
-		struct usb_request_block *ur = (void *)addr;
+		struct usb_request_block *urb = (void *)addr;
 		struct usb_request_block *kurb;
 		struct usb_request_block *np;
 		struct ugen_endpoint *sce;
-		int err = 0;
+		int dir;
 		int s;
 
-		sce = &sc->sc_endpoints[endpt][IN];
-		if (sce == 0 || sce->edesc == 0)
-			return (ENXIO);
-		s = splusb();
-		kurb = NULL;
-		TAILQ_FOREACH(np, &sce->submit_queue_head, entries)
-			if (np->urb_context == ur->urb_context) {
-				kurb = np;
-				break;
-			}
-		if (kurb)
-			usbd_abort_transfer(kurb->urb_xfer);
-		else {
-			TAILQ_FOREACH(np, &sce->complete_queue_head, entries)
-				if (np->urb_context == ur->urb_context) {
+		for (dir = OUT; dir <= IN; dir++) {
+			if (!(flag & (dir == OUT ? FWRITE : FREAD)))
+				continue;
+			sce = &sc->sc_endpoints[endpt][dir];
+			if (sce == 0 || sce->edesc == 0)
+				continue;
+			kurb = NULL;
+			TAILQ_FOREACH(np, &sce->submit_queue_head, entries)
+				if (np->urb_context == urb->urb_context) {
 					kurb = np;
 					break;
 				}
-			if (kurb)
-				kurb->urb_status = USBD_CANCELLED;
-			else
-				err = EINVAL;
+			if (kurb) {
+				usbd_abort_transfer(kurb->urb_xfer);
+				return (0);
+			} else {
+				TAILQ_FOREACH(np, &sce->complete_queue_head,
+				    entries)
+					if (np->urb_context ==
+					    urb->urb_context) {
+						kurb = np;
+						break;
+					}
+				if (kurb) {
+					kurb->urb_status = USBD_CANCELLED;
+					return (0);
+				}
+			}
+			splx(s);
 		}
-		splx(s);
-		return (err);
+		return (EINVAL);
 	}
 	default:
 		break;
@@ -1476,7 +1496,10 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 {
 	struct ugen_softc *sc;
 	struct ugen_endpoint *sce;
+	struct ugen_endpoint *tmp;
 	int revents = 0;
+	int completed = 0;
+	int dir;
 	int s;
 
 	sc = ugen_cd.cd_devs[UGENUNIT(dev)];
@@ -1484,22 +1507,29 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	if (usbd_is_dying(sc->sc_udev))
 		return (POLLERR);
 
-	/* XXX always IN */
-	sce = &sc->sc_endpoints[UGENENDPOINT(dev)][IN];
-	if (sce == NULL)
+	sce = 0;
+	for (dir = OUT; dir <= IN; dir++) {
+		tmp = &sc->sc_endpoints[UGENENDPOINT(dev)][dir];
+		if (tmp == 0 || tmp->edesc == 0)
+			continue;
+		sce = tmp;
+		s = splusb();
+		if (!TAILQ_EMPTY(&sce->complete_queue_head))
+			completed = 1;
+		splx(s);
+
+	}
+
+	if (sce == 0 || sce->edesc == 0)
 		return (POLLERR);
 #ifdef DIAGNOSTIC
-	if (!sce->edesc) {
-		printf("ugenpoll: no edesc\n");
-		return (POLLERR);
-	}
-	if (UGENENDPOINT(dev) != USB_CONTROL_ENDPOINT) {
+	if (UGENENDPOINT(dev) != USB_CONTROL_ENDPOINT)
 		if (!sce->pipeh) {
 			printf("ugenpoll: no pipe\n");
 			return (POLLERR);
 		}
-	}
 #endif
+
 	s = splusb();
 	switch (sce->edesc->bmAttributes & UE_XFERTYPE) {
 	case UE_INTERRUPT:
@@ -1507,7 +1537,7 @@ ugenpoll(dev_t dev, int events, struct proc *p)
 	case UE_BULK:
 	case UE_CONTROL:
 		if (events & (POLLIN | POLLRDNORM)) {
-			if (!TAILQ_EMPTY(&sce->complete_queue_head))
+			if (completed)
 				revents |= events & (POLLIN | POLLRDNORM);
 			else
 				selrecord(p, &sce->rsel);
